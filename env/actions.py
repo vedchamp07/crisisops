@@ -37,6 +37,7 @@ from env.state import (
     DRIFT_ACK_WINDOW,
 )
 from env.candor import get_observable_signals, update_ticket_change_step
+from env.stakeholders import apply_bad_news_penalty
 
 # ---------------------------------------------------------------------------
 # Cost tier constants — spec "ACTION SYSTEM"
@@ -354,6 +355,10 @@ def action_communicate(state: ProjectState, params: Dict[str, Any]) -> ActionRes
         state.stakeholder.client_satisfaction = min(
             10.0, state.stakeholder.client_satisfaction + gain
         )
+    elif message_type == "bad_news":
+        # Spec: -1.5 if bad news is delivered without a solution.
+        has_solution = bool(params.get("has_solution", False))
+        apply_bad_news_penalty(state, has_solution)
     elif message_type == "risk_communication":
         state.stakeholder.exec_support = min(
             10.0, state.stakeholder.exec_support + EXEC_GAIN_RISK_COMM
@@ -717,7 +722,7 @@ def _acknowledge_pending_drift(state: ProjectState) -> None:
         state.pending_drift_event.acknowledged = True
 
 
-def _check_crisis_resolution(crisis: "Crisis", state: ProjectState) -> None:
+def check_crisis_resolution(crisis: "Crisis", state: ProjectState) -> None:
     """
     Mark a crisis as resolved if all its affected tasks are done or
     have actual_progress >= CRISIS_RESOLUTION_COMPLETION_THRESHOLD.
@@ -733,6 +738,11 @@ def _check_crisis_resolution(crisis: "Crisis", state: ProjectState) -> None:
         if task.status != "done" and task.actual_progress < CRISIS_RESOLUTION_COMPLETION_THRESHOLD:
             return
     crisis.is_resolved = True
+
+
+def _check_crisis_resolution(crisis: "Crisis", state: ProjectState) -> None:
+    """Backward-compatible wrapper for internal call sites."""
+    check_crisis_resolution(crisis, state)
 
 
 def _expert_advisor(state: ProjectState) -> Dict[str, Any]:

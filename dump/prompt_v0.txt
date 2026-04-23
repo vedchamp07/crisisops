@@ -1,0 +1,203 @@
+You are an expert RL systems engineer. I am attaching an HTML file that contains the complete specification for "CrisisOps v2" — an OpenEnv-compatible reinforcement learning environment for training a small LLM to recover failing software projects against adversarially deceptive team members.
+
+Read the entire HTML file carefully before writing a single line of code. Every architectural decision, every parameter, every reward formula, and every action definition in that document must be reflected in the codebase. Do not invent anything not in the spec. Do not simplify anything the spec calls out explicitly.
+
+---
+
+WHAT TO BUILD
+
+Build a complete, runnable Python codebase with the following structure:
+
+crisisops/
+├── env/
+│   ├── __init__.py
+│   ├── state.py           # ProjectState, TeamMember, StakeholderState dataclasses
+│   ├── candor.py          # Candor score system, deception mechanics, observable signal generation
+│   ├── crisis_generator.py # CrisisGenerator with weakness tracking and curriculum escalation
+│   ├── actions.py         # All 12 actions with cost tiers, side effects, and state transitions
+│   ├── schema_drift.py    # Mid-episode requirement change event system
+│   ├── stakeholders.py    # Client and exec reactive agent state machines
+│   └── environment.py     # Main CrisisOpsEnv class: reset(), step(), state(), OpenEnv 0.2.1 compatible
+├── reward/
+│   ├── __init__.py
+│   ├── baseline.py        # GreedyPMBaseline — always trusts reports, picks highest severity, communicates every 5 steps
+│   ├── counterfactual.py  # project_score() function and counterfactual reward computation
+│   └── metrics.py         # cross_verification_rate, actions_to_recovery, secondary metrics
+├── training/
+│   ├── __init__.py
+│   ├── grpo_trainer.py    # GRPO training loop using HF TRL 0.29.0 and Unsloth LoRA r=16 on Qwen2.5-1.5B
+│   ├── curriculum.py      # Level 1→4 curriculum manager, unlocks next level on mastery threshold
+│   └── colab_notebook.ipynb  # Self-contained Colab notebook — install deps, run training, plot curves
+├── deployment/
+│   ├── __init__.py
+│   ├── jira_adapter.py    # Maps agent action outputs to real Linear/Jira API calls — same JSON schemas as sim
+│   └── mcp_server.py      # FastMCP server exposing the environment as an OpenEnv HTTP endpoint
+├── baselines/
+│   ├── __init__.py
+│   └── random_agent.py    # Random agent for sanity checking reward range
+├── scenarios/
+│   ├── level1.py          # 3 Level 1 crisis templates (single crisis, one deceptive member)
+│   ├── level2.py          # Level 2 templates (double crisis, two deceptive members, schema drift)
+│   ├── level3.py          # Level 3 templates (cascading, adversarial majority)
+│   └── level4.py          # Level 4 templates (full disaster, information war, 8-step budget)
+├── calibration/
+│   └── calibrate.py       # Runs greedy vs oracle on 20 episodes, prints gap, flags if out of target range
+├── tests/
+│   ├── test_env.py        # reset/step/state cycle, action cost accounting, budget enforcement
+│   ├── test_candor.py     # Verify reported != actual for low candor, verify signals always reflect actual
+│   ├── test_reward.py     # Verify reward > 0 when agent beats greedy, < 0 when worse
+│   └── test_curriculum.py # Verify level unlock triggers on correct mastery threshold
+└── requirements.txt
+
+---
+
+CRITICAL IMPLEMENTATION RULES — read these before writing any file
+
+CANDOR SYSTEM (candor.py)
+- Each TeamMember has a hidden candor float between 0.0 and 1.0
+- Three levels: honest (0.85–1.0), optimism_bias (0.5–0.7), self_preservation (0.1–0.4)
+- Reported completion formula exactly: reported = actual + (1 - candor) * inflation_bias
+- inflation_bias is sampled per episode from a distribution appropriate to the candor level
+- Observable signals are derived ONLY from actual state, never from reported state:
+    ticket_age_days: days since ticket last changed status — derived from actual completion velocity
+    commits_last_72h: integer count — 0 if actual completion stalled, proportional to actual progress
+    peer_mentions: count of how often this member appears in other members' dependency chains
+- The agent NEVER has direct access to the candor float. It must infer reliability from the contradiction between reported completion and observable signals.
+- Do not add any shortcut that lets the agent trivially read true state. The asymmetry is the point.
+
+GREEDY PM BASELINE (baseline.py)
+- The baseline must be deterministic and rule-based — no LLM, no randomness
+- It always trusts self-reports. It never calls query_observable_signals.
+- It picks the crisis with highest reported severity each step
+- It picks the member with highest reported availability for reassignment
+- It communicates once every 5 steps regardless of stakeholder state
+- Calibration target: mean project_score of 0.45–0.55 across 20 random Level 1 episodes
+- If calibration runs outside this range, print a warning and instructions for adjusting inflation_bias
+
+COUNTERFACTUAL REWARD (counterfactual.py)
+- project_score(state) = 0.5 * recovery_pct + 0.3 * client_satisfaction_normalized + 0.2 * team_morale_avg
+- All three components computed from ACTUAL state, not reported state
+- reward = project_score(agent_final_state) - project_score(greedy_PM_final_state)
+- Both agent and greedy PM start from identical initial state each episode
+- greedy PM runs its full episode in a cloned environment — completely isolated from agent's episode
+- Secondary metric: cross_verification_rate = query_observable_signals_calls / total_member_query_calls
+  Track this per episode and expose it in the info dict returned by step()
+
+ACTION SYSTEM (actions.py)
+- Implement all 12 actions exactly as specified: 4 free, 7 cost-1, 1 cost-2, 1 terminal
+- Free actions: query_status, query_member_report, query_observable_signals, query_ticket
+- Cost-1 actions: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert
+- Cost-2 actions: resolve_blocker
+- Terminal: submit_recovery_plan
+- Budget starts at 20. Free actions do not decrement it. Cost-N actions decrement by N.
+- If budget reaches 0 before submit_recovery_plan is called, episode ends with a penalty applied to agent score (greedy PM gets its normal score, reward goes negative)
+- consult_expert() must call a rule-based expert advisor — not an LLM — that returns structured PM guidance based on current state. The advisor always has access to true state (it is the "senior PM" who knows everything). This is the Snorkel AI bonus mechanism.
+- request_resource() silently fails and returns a failure observation if exec_support < 5
+
+SCHEMA DRIFT (schema_drift.py)
+- Each episode at Level 2+, a drift event fires at a randomly chosen step between 6 and 12
+- Three drift event types:
+    regulatory_change: adds a new compliance requirement that blocks one feature from shipping. Agent must detect via status observation and update plan.
+    client_scope_change: client deprioritizes one feature and adds a new one. Changes which tasks are critical path.
+    team_policy_change: new mandatory review process added — all PRs need a second approver. Increases time estimates.
+- After a drift event fires, the observation returned in the next step() call includes a drift_event field describing what changed
+- The agent must take at least one planning action (update_timeline or communicate) acknowledging the drift within 3 steps or a stakeholder satisfaction penalty applies
+
+STAKEHOLDER STATE MACHINES (stakeholders.py)
+- Client: satisfaction starts at 7.0. Decreases 0.5 per step if no communication in last 5 steps. Decreases 1.5 if bad news delivered without a solution. Increases 1.0 for proactive escalation with plan. If satisfaction < 4, triggers exec_escalation event.
+- Executive: support starts at 8.0. Decreases 1.0 per exec_escalation event. Decreases 0.5 if budget request made without updated timeline. Increases 0.5 for proactive risk communication. If support < 5, budget requests silently fail.
+- Both stakeholder states must be part of the observation returned to the agent (partially — the agent sees satisfaction/support level but not the exact thresholds or state machine internals)
+
+CRISIS GENERATOR (crisis_generator.py)
+- Maintains a per-crisis-type recovery rate tracker across episodes
+- After each episode, updates recovery_rate[crisis_type] with exponential moving average (alpha=0.3)
+- For the next episode, samples crisis types with probability inversely proportional to recovery rate — agent's weakest areas appear most often
+- Also tracks which candor levels the agent handles worst and increases prevalence of those in subsequent episodes
+- Exposes a get_difficulty_report() method showing current recovery rates per crisis type — useful for demo
+
+OPENENV COMPATIBILITY (environment.py)
+- Implement the full OpenEnv 0.2.1 interface: reset(), step(action), state()
+- reset() returns initial observation dict
+- step(action) returns (observation, reward, done, info) — standard gym tuple
+- The info dict must include: cross_verify_rate, actions_used, budget_remaining, greedy_pm_score_so_far, active_crises, drift_events_fired
+- state() returns full serializable state for OpenEnv HTTP server
+- Action input format: {"action_type": "query_member_report", "params": {"member_id": "dev_2"}}
+- Include input validation — invalid action_type or missing params return an error observation without decrementing budget
+
+GRPO TRAINING (grpo_trainer.py)
+- Model: Qwen/Qwen2.5-1.5B-Instruct
+- Use Unsloth for LoRA: rank r=16, alpha=32, target_modules=["q_proj","v_proj"]
+- Use HF TRL GRPOTrainer with the counterfactual reward as the reward function
+- Observation is formatted as a structured prompt: system prompt describes the PM role and available tools, user turn contains current project state as JSON, assistant generates the next action as structured JSON
+- The reward function passed to GRPOTrainer calls the environment's counterfactual reward
+- Log cross_verification_rate alongside reward at every episode — both curves must appear in training output
+- Curriculum: unlock Level 2 when mean reward over last 10 episodes > 0.15. Unlock Level 3 when > 0.25. Unlock Level 4 when > 0.35.
+
+JIRA ADAPTER (jira_adapter.py)
+- Maps each of the 12 agent actions to the corresponding Linear/Jira API call
+- Uses identical field names and JSON schemas as the simulation — the mapping is one-to-one
+- Reads JIRA_API_KEY and JIRA_PROJECT_ID from environment variables
+- For the demo: only submit_recovery_plan() makes a real API call (creates a new issue with the recovery plan as description). All other actions log what they would do without calling the API.
+- Include a dry_run=True mode that prints the API payload without executing
+
+CALIBRATION SCRIPT (calibrate.py)
+- Runs GreedyPMBaseline and OracleAgent (always checks observable signals before acting) on 20 random Level 1 episodes each
+- Prints mean and std of project_score for both
+- Prints the gap (oracle_mean - greedy_mean)
+- Target gap: 0.20–0.35. If below 0.20: print "Increase inflation_bias in candor.py". If above 0.35: print "Reduce signal contradiction strength in candor.py"
+- This script must be run before any GRPO training to verify calibration
+
+TESTS (tests/)
+- test_env.py: verify that budget decrements correctly per action cost, that episode ends when budget=0, that free actions do not decrement budget, that submit_recovery_plan ends episode
+- test_candor.py: for candor=0.1, verify reported_completion > actual_completion + 0.3 in 90%+ of samples. For candor=0.9, verify |reported - actual| < 0.15 in 90%+ of samples. Verify observable signals are derived from actual state only.
+- test_reward.py: construct a state where agent clearly outperforms greedy (all crises resolved, client satisfaction 8, morale 7) and verify reward > 0.15. Construct a state where agent performs worse and verify reward < 0.
+- test_curriculum.py: verify level unlock fires at correct reward thresholds
+
+---
+
+CODE QUALITY REQUIREMENTS
+
+- Every class and function must have a docstring explaining what it does and why — not just what parameters it takes
+- Type hints on all function signatures
+- No magic numbers anywhere — all constants defined at the top of each file with a comment explaining their source from the spec
+- The counterfactual reward weights (0.5, 0.3, 0.2) must be defined as named constants: RECOVERY_WEIGHT, CLIENT_WEIGHT, MORALE_WEIGHT
+- The calibration target range (0.45–0.55 for greedy, 0.70–0.80 for oracle) must be named constants
+- All candor level ranges must be named constants: HONEST_CANDOR_RANGE, OPTIMISM_BIAS_RANGE, SELF_PRESERVATION_RANGE
+- Use dataclasses for all state objects — no raw dicts for internal state
+- The environment must be deterministically seedable: reset(seed=42) must produce identical episodes for reproducibility
+
+---
+
+WHAT NOT TO DO
+
+- Do not use an LLM for the greedy PM baseline or the expert advisor — both must be rule-based
+- Do not let the agent access candor scores directly anywhere in the codebase — search your own output for any place the candor float is passed to the agent observation and remove it
+- Do not simplify the counterfactual reward to a single component — all three components (recovery, client, morale) must be present
+- Do not skip the calibration script — it is a prerequisite for correct training
+- Do not implement the Jira adapter as making real API calls during training — only submit_recovery_plan in dry_run=False mode makes real calls
+- Do not hardcode scenario parameters — all crisis templates must be parametric so the CrisisGenerator can vary them
+
+---
+
+START WITH THIS ORDER
+
+1. state.py — define all dataclasses first, everything else depends on them
+2. candor.py — the core novel mechanism, get this right before building anything else
+3. actions.py — 12 actions with exact cost tiers
+4. stakeholders.py — client and exec state machines
+5. schema_drift.py — drift event system
+6. environment.py — assembles everything above into OpenEnv interface
+7. reward/baseline.py — greedy PM
+8. reward/counterfactual.py — reward function
+9. reward/metrics.py — secondary metrics
+10. calibration/calibrate.py — run this to verify before training
+11. scenarios/ — all four level files
+12. crisis_generator.py — curriculum and weakness tracking
+13. training/grpo_trainer.py — GRPO loop
+14. training/curriculum.py — level manager
+15. deployment/ — jira adapter and MCP server
+16. tests/ — all four test files
+17. training/colab_notebook.ipynb — final integration notebook
+18. requirements.txt
+
+Do not proceed to the next file until the current one compiles and its logic is internally consistent with the spec.

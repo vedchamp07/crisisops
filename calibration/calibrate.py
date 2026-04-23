@@ -66,6 +66,10 @@ class OracleAgent:
         """
         Choose an action using full visibility into true state.
 
+        OracleAgent uses TRUE state (not only observable signals) for decisions.
+        This is intentional: oracle score represents a theoretical ceiling.
+        A strong trained LLM should score below oracle but above greedy.
+
         Priority:
         1. query_observable_signals for any member not yet checked this episode
         2. consult_expert to get advisory
@@ -198,7 +202,7 @@ def run_calibration() -> None:
 
     This function is the entry point when running calibrate.py as a script.
     """
-    from scenarios.level1 import get_random_level1_scenario
+    from scenarios.level1 import LEVEL1_SCENARIOS
 
     print("=" * 60)
     print("CrisisOps v2 — Calibration")
@@ -211,8 +215,11 @@ def run_calibration() -> None:
     for i in range(N_CALIBRATION_EPISODES):
         seed = CALIBRATION_SEED_BASE + i
 
-        # Use the same scenario template for both agents in each episode
-        scenario_fn = get_random_level1_scenario()
+        # Deterministic scenario selection so both agents face identical episodes.
+        scenario_rng = random.Random(seed)
+        scenario_fn = LEVEL1_SCENARIOS[
+            scenario_rng.randint(0, len(LEVEL1_SCENARIOS) - 1)
+        ]
 
         # Greedy PM
         greedy_env = CrisisOpsEnv(

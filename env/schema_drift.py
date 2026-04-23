@@ -190,7 +190,11 @@ def build_team_policy_change(
     return event
 
 
-def fire_drift_event(state: ProjectState, rng: random.Random) -> Optional[DriftEvent]:
+def fire_drift_event(
+    state: ProjectState,
+    rng: random.Random,
+    forced_type: Optional[str] = None,
+) -> Optional[DriftEvent]:
     """
     Choose an event type and build the corresponding DriftEvent.
 
@@ -201,7 +205,11 @@ def fire_drift_event(state: ProjectState, rng: random.Random) -> Optional[DriftE
     Returns None if no eligible event could be constructed (edge case in
     degenerate states where all tasks are done).
     """
-    drift_type = choose_drift_type(rng)
+    if forced_type in DRIFT_EVENT_TYPES:
+        drift_type = forced_type
+    else:
+        drift_type = choose_drift_type(rng)
+    state.fired_drift_type = drift_type
     builders = {
         DRIFT_REGULATORY_CHANGE:  build_regulatory_change,
         DRIFT_CLIENT_SCOPE_CHANGE: build_client_scope_change,

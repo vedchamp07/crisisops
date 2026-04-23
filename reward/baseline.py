@@ -73,6 +73,10 @@ class GreedyPMBaseline:
         self._steps_since_comm += 1
         self._step += 1
 
+        # Submit before budget exhaustion, even if crises remain unresolved.
+        if state.budget_remaining <= 3:
+            return self._submit_plan()
+
         # --- Communication every 5 steps ---
         if self._steps_since_comm >= GREEDY_COMM_INTERVAL:
             self._steps_since_comm = 0

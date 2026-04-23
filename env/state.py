@@ -256,6 +256,8 @@ class ProjectState:
     active_drift_events: List[DriftEvent] = field(default_factory=list)
     # Set by scenario/generator; None means no drift in this episode
     drift_fire_step: Optional[int] = None
+    # Drift event type that fired in this episode (for fair greedy replay)
+    fired_drift_type: Optional[str] = None
     # Drift fired but not yet delivered to agent in observation
     pending_drift_event: Optional[DriftEvent] = None
 

@@ -50,7 +50,7 @@ from env.candor import (
     refresh_reported_values,
     update_ticket_change_step,
 )
-from env.actions import dispatch_action, ACTION_COSTS
+from env.actions import dispatch_action, ACTION_COSTS, check_crisis_resolution
 from env.stakeholders import (
     step_client_state_machine,
     step_exec_state_machine,
@@ -74,6 +74,14 @@ BUDGET_EXHAUSTION_PENALTY = 0.30
 # Velocity advance per step — how much actual_completion advances for each
 # team member each step (scales with actual_velocity).
 COMPLETION_ADVANCE_PER_STEP = 0.065
+
+# Minimum delta in task progress to count as observable ticket activity.
+# Honest members (VELOCITY_HIGH=[0.6,0.9], AVAIL_HIGH=[0.7,1.0]) produce
+# at minimum 0.6*0.7*0.065=0.0273/step.  Self-preservation members
+# (VELOCITY_LOW=[0.05,0.25], AVAIL_LOW=[0.3,0.6]) produce at most
+# 0.25*0.6*0.065=0.0098/step.  Threshold 0.02 cleanly separates them:
+# honest always exceeds it, deceptive never does.
+PROGRESS_CHANGE_THRESHOLD = 0.02
 
 # Morale passive decay per step (teams get tired in a crisis)
 MORALE_DECAY_PER_STEP = 0.05
@@ -160,6 +168,7 @@ class CrisisOpsEnv:
         state.active_drift_events = []
         state.pending_drift_event = None
         state.drift_fire_step = None
+        state.fired_drift_type = None
 
         # Initialise candor for all members
         for member in state.team_members:
@@ -223,7 +232,11 @@ class CrisisOpsEnv:
             and state.current_step == state.drift_fire_step
             and not state.done
         ):
-            event = fire_drift_event(state, self._rng)
+            event = fire_drift_event(
+                state,
+                self._rng,
+                forced_type=state.fired_drift_type,
+            )
             if event is not None:
                 self._drift_events_fired += 1
 
@@ -341,6 +354,7 @@ class CrisisOpsEnv:
                 }
                 for e in s.active_drift_events
             ],
+            "fired_drift_type": s.fired_drift_type,
             "cross_verify_calls": s.cross_verify_calls,
             "total_member_query_calls": s.total_member_query_calls,
             "actions_used": s.actions_used,
@@ -452,6 +466,7 @@ class CrisisOpsEnv:
         greedy_env._curriculum_level = self._curriculum_level
         if self._curriculum_level >= 2:
             greedy_env._state.drift_fire_step = greedy_initial.drift_fire_step
+            greedy_env._state.fired_drift_type = agent_state.fired_drift_type
 
         greedy_baseline = GreedyPMBaseline()
         greedy_done = False
@@ -500,6 +515,7 @@ def _advance_actual_completions(state: ProjectState) -> None:
 
             old_progress = task.actual_progress
             task.actual_progress = min(1.0, task.actual_progress + progress_this_step)
+            progress_delta = task.actual_progress - old_progress
 
             # Mark done when progress reaches 1.0
             if task.actual_progress >= 1.0:
@@ -507,10 +523,9 @@ def _advance_actual_completions(state: ProjectState) -> None:
                 task.actual_progress = 1.0
                 update_ticket_change_step(member, state.current_step)
 
-            # Mark velocity as active if progress moved
-            elif task.actual_progress - old_progress > 0.005:
-                # ticket changed effectively this step
-                pass
+            # Mark ticket as changed for meaningful progress movement.
+            elif progress_delta >= PROGRESS_CHANGE_THRESHOLD:
+                update_ticket_change_step(member, state.current_step)
 
         # Update member-level actual_completion as avg of assigned tasks
         assigned_tasks = [
@@ -533,16 +548,8 @@ def _advance_actual_completions(state: ProjectState) -> None:
 
     # Check crisis resolutions after advancing
     for crisis in state.crises:
-        if crisis.is_resolved:
-            continue
-        if not crisis.affected_task_ids:
-            continue
-        all_done = all(
-            (state.get_task(tid) is not None and state.get_task(tid).status == "done")
-            for tid in crisis.affected_task_ids
-        )
-        if all_done:
-            crisis.is_resolved = True
+        if not crisis.is_resolved:
+            check_crisis_resolution(crisis, state)
 
 
 def _state_to_obs(state: ProjectState) -> Dict[str, Any]:

@@ -259,6 +259,7 @@ Follow these steps in order. Only take ONE action per turn.
 STEP A — GATHER (FREE, costs no budget):
   If any team member has NOT been cross-verified yet → call query_observable_signals for them.
   This is always your top priority until all members are verified.
+    BUT: if you have NOT communicated in the last 4 steps → jump to STEP C rule 2 first.
 
 STEP B — DETECT:
   Compare each member's reported_completion with their signals.
@@ -266,7 +267,7 @@ STEP B — DETECT:
 
 STEP C — ACT (pick the highest-impact paid action):
   1. Deceptive member assigned to an unresolved crisis task → reassign_task to best available member
-  2. client_satisfaction < 6 → communicate {"message_type": "proactive_escalation_with_plan", ...}
+    2. Steps since last communicate >= 4 → communicate {"message_type": "proactive_escalation_with_plan", ...}
   3. Blocked critical-path task and budget > 4 → resolve_blocker
   4. Any unresolved crisis and budget > 3 → reassign_task or escalate_risk
   5. Budget ≤ 3 OR all crises resolved → submit_recovery_plan IMMEDIATELY
@@ -542,6 +543,7 @@ class LLMAgent:
         2. Budget exhaustion → submit_recovery_plan immediately
         """
         budget = observation.get("budget_remaining", 20)
+        step = self._memory["step"]
 
         # Budget emergency: force submit before going negative
         if budget <= _SUBMIT_BUDGET_THRESHOLD:
@@ -553,6 +555,17 @@ class LLMAgent:
                 f"Deceptive members: {list(self._memory['deceptive'].keys())}."
             )
             return {"action_type": "submit_recovery_plan", "params": {"plan_summary": summary}}
+
+        # Proactive communication before CLIENT_COMMUNICATION_WINDOW decay kicks in.
+        if step == 4 and "communicate" not in self._memory["actions_taken"]:
+            return {
+                "action_type": "communicate",
+                "params": {
+                    "message_type": "proactive_escalation_with_plan",
+                    "content": "Proactive update: gathering status and verifying team signals.",
+                    "target": "both",
+                },
+            }
 
         # Gather phase: signal-verify every member before spending budget
         unverified = self._next_unverified_member(observation)
@@ -730,10 +743,20 @@ class LLMAgent:
                         )
 
         client_sat = observation.get("stakeholder", {}).get("client_satisfaction", 10)
-        if client_sat < 6 and unresolved:
+        acts = self._memory["actions_taken"]
+        steps_since_last_comm = 0
+        for action_name in reversed(acts):
+            if action_name == "communicate":
+                break
+            steps_since_last_comm += 1
+        else:
+            steps_since_last_comm = len(acts)
+
+        if (client_sat < 7 or steps_since_last_comm >= 4) and unresolved:
             return (
-                f"client_satisfaction={client_sat} is LOW. "
-                f"Call communicate with message_type=proactive_escalation_with_plan."
+                f"COMMUNICATION DUE (steps_since_comm={steps_since_last_comm}, "
+                f"sat={client_sat:.1f}). Call communicate with "
+                f"message_type=proactive_escalation_with_plan."
             )
 
         if unresolved and budget > 4:
