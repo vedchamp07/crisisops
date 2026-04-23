@@ -1,0 +1,421 @@
+```
+You are working on CrisisOps, an RL environment for training an LLM to recover
+failing software projects. The codebase is attached.
+
+There are FIVE changes to make. Read the entire codebase first. Make changes in the
+order listed. Do not touch anything not mentioned.
+
+---
+
+CHANGE 1 — Fix hint placement in llm_agent.py (the remaining compliance bug)
+
+FILE: baselines/llm_agent.py
+LOCATION: the act() method, around line 640, where user_content is assembled.
+
+CURRENT CODE (roughly):
+    user_content = (
+        f"{memory_ctx}\n\n"
+        f"REQUIRED NEXT ACTION: {required_hint}\n\n"
+        f"CURRENT OBSERVATION:\n{obs_json}"
+    )
+
+PROBLEM: The REQUIRED NEXT ACTION sits before a 2,000-token JSON blob. Weak models
+(gpt-4o-mini, llama3.1, Qwen2.5-1.5B) attend primarily to the last tokens before
+generation. The hint is buried under the JSON.
+
+FIX: Restructure so the hint appears AFTER the observation JSON, right before
+generation. Also wrap it in triple asterisks so it parses as visually distinct:
+
+    user_content = (
+        f"{memory_ctx}\n\n"
+        f"CURRENT OBSERVATION:\n{obs_json}\n\n"
+        f"***REQUIRED NEXT ACTION***: {required_hint}\n"
+        f"Respond with exactly one JSON object using the format in the system prompt."
+    )
+
+Also fix the anti-loop in _anti_loop_override: change it to track ACTION CATEGORY
+(free vs. paid) rather than exact action type. Replace:
+
+    if all(a == action[\"action_type\"] for a in recent):
+
+With:
+
+    FREE_ACTIONS = {\"query_status\", \"query_member_report\", \"query_observable_signals\", \"query_ticket\"}
+    is_all_free = all(a in FREE_ACTIONS for a in recent)
+    if is_all_free and action[\"action_type\"] in FREE_ACTIONS:
+
+This means: if the last 2 actions were BOTH free (regardless of which free action),
+and the new action is also free → override with a decisive action. Comment each
+changed line with # FIX-5: [reason].
+
+After this fix, run the LLM eval with 5 episodes. Expected: at least 3 different
+paid action types in the distribution. LLM score should exceed 0.30.
+
+---
+
+CHANGE 2 — Add training curve export to grpo_trainer.py
+
+FILE: training/grpo_trainer.py
+LOCATION: inside _CurriculumProgressCallback.on_log(), and after trainer.train()
+
+Add a list at module level to accumulate reward history for export:
+    _training_reward_log: List[Dict] = []  # [{episode, reward, level}]
+
+Inside on_log(), append to _training_reward_log every time a reward is logged:
+    _training_reward_log.append({
+        "episode": len(self._reward_history),
+        "reward": batch_reward,
+        "level": current_level,
+    })
+
+After trainer.train() completes, in the train() function, save two things:
+
+1. A JSON file with the full reward log:
+    import json
+    log_path = os.path.join(output_dir, "reward_log.json")
+    with open(log_path, "w") as f:
+        json.dump(_training_reward_log, f, indent=2)
+    print(f"Reward log saved to {log_path}")
+
+2. A matplotlib curve saved as PNG (do NOT call plt.show() — save only):
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        episodes = [r["episode"] for r in _training_reward_log]
+        rewards = [r["reward"] for r in _training_reward_log]
+        levels = [r["level"] for r in _training_reward_log]
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(episodes, rewards, color="#2563eb", linewidth=1.5, label="CF Reward")
+        ax.axhline(0, color="gray", linestyle="--", linewidth=0.8, label="Greedy baseline (0)")
+
+        # Shade regions by curriculum level
+        colors = {1: "#eff6ff", 2: "#ecfdf5", 3: "#fefce8", 4: "#fff1f2"}
+        prev_ep, prev_lv = 0, levels[0] if levels else 1
+        for i, (ep, lv) in enumerate(zip(episodes, levels)):
+            if lv != prev_lv or i == len(episodes) - 1:
+                ax.axvspan(prev_ep, ep, alpha=0.3, color=colors.get(prev_lv, "#f5f5f5"),
+                           label=f"Level {prev_lv}")
+                prev_ep, prev_lv = ep, lv
+
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Counterfactual Reward")
+        ax.set_title("CrisisOps — Training Curve")
+        ax.legend(loc="upper left")
+        curve_path = os.path.join(output_dir, "training_curve.png")
+        plt.savefig(curve_path, dpi=150, bbox_inches="tight")
+        plt.close()
+        print(f"Training curve saved to {curve_path}")
+    except ImportError:
+        print("matplotlib not available — skipping curve export")
+
+Also add checkpoint saving inside the curriculum callback. After the
+print(f"Training log: episode {self._next_log_episode}...") line, add:
+
+    # Save a named checkpoint at each log interval for demo flexibility
+    checkpoint_dir = os.path.join(output_dir, f"checkpoint_ep{self._next_log_episode}")
+    try:
+        model.save_pretrained(checkpoint_dir)
+        tokenizer.save_pretrained(checkpoint_dir)
+        print(f"Checkpoint saved: {checkpoint_dir}")
+    except Exception as e:
+        print(f"Checkpoint save failed: {e}")
+
+---
+
+CHANGE 3 — Add episode replay tool (new file)
+
+CREATE FILE: baselines/replay.py
+
+This file takes a trained model checkpoint path and a seed, runs one episode, and
+prints a human-readable story of every action and its outcome.
+
+```python
+"""
+baselines/replay.py — Episode replay tool for CrisisOps.
+
+Runs one episode with the LLM agent and prints a narrative action trace
+suitable for demo presentation.
+
+Usage:
+    python -m baselines.replay --seed 42 --level 1 --verbose
+    python -m baselines.replay --seed 42 --model-path ./outputs/checkpoint_ep150
+"""
+
+from __future__ import annotations
+import argparse
+import json
+import os
+import sys
+import time
+from typing import Any, Dict, List, Optional
+
+# ---------------------------------------------------------------------------
+# Narrative templates for each action type
+# ---------------------------------------------------------------------------
+ACTION_NARRATIVES = {
+    "query_status":             "📋 Queried overall project status",
+    "query_member_report":      "👤 Asked {member_id} for status update",
+    "query_observable_signals": "🔍 Cross-verified {member_id} against commit log and ticket age",
+    "query_ticket":             "🎫 Checked ticket {task_id}",
+    "reassign_task":            "🔄 Reassigned task {task_id} → {to_member_id}",
+    "communicate":              "📣 Communicated ({message_type}) to {target}",
+    "escalate_risk":            "⚠️  Escalated risk: {risk_description}",
+    "cut_scope":                "✂️  Cut scope: {task_ids}",
+    "update_timeline":          "📅 Updated timeline to {new_completion_date}",
+    "consult_expert":           "🧑‍💼 Consulted expert PM advisor",
+    "request_resource":         "📦 Requested additional resource",
+    "resolve_blocker":          "🔓 Resolved blocker on {task_id}",
+    "submit_recovery_plan":     "✅ Submitted recovery plan",
+}
+
+DECEPTION_SIGNALS = []  # populated per episode
+
+
+def _format_action(action_type: str, params: Dict[str, Any]) -> str:
+    template = ACTION_NARRATIVES.get(action_type, f"[{action_type}]")
+    try:
+        return template.format(**params)
+    except KeyError:
+        return f"{action_type} {json.dumps(params)}"
+
+
+def _format_obs_summary(obs: Dict[str, Any]) -> str:
+    budget = obs.get("budget_remaining", "?")
+    crises = obs.get("crises", [])
+    unresolved = [c["crisis_id"] for c in crises if not c.get("is_resolved")]
+    client_sat = obs.get("stakeholder", {}).get("client_satisfaction", "?")
+    return (
+        f"budget={budget} | unresolved_crises={unresolved} | client_sat={client_sat:.1f}"
+        if isinstance(client_sat, float) else
+        f"budget={budget} | unresolved_crises={unresolved} | client_sat={client_sat}"
+    )
+
+
+def run_replay(
+    seed: int = 42,
+    level: int = 1,
+    model_path: Optional[str] = None,
+    verbose: bool = False,
+) -> None:
+    from env.environment import CrisisOpsEnv, MAX_STEPS
+    from reward.baseline import GreedyPMBaseline
+    from reward.counterfactual import project_score
+    from scenarios.level1 import get_random_level1_scenario
+    from baselines.llm_agent import LLMAgent, _detect_provider
+
+    base_url, api_key, default_model = _detect_provider()
+    model_name = default_model
+
+    # If a local checkpoint path is given, configure to use it
+    if model_path and os.path.isdir(model_path):
+        os.environ["LLM_BASE_URL"] = "http://localhost:11434/v1"
+        os.environ["OLLAMA_MODEL"] = model_path
+        base_url = "http://localhost:11434/v1"
+        api_key = "ollama"
+        model_name = model_path
+        print(f"Using local checkpoint: {model_path}")
+    
+    scenario_fn = get_random_level1_scenario()
+
+    # --- Agent episode ---
+    env = CrisisOpsEnv(scenario_fn=scenario_fn, curriculum_level=level)
+    obs = env.reset(seed=seed)
+    agent = LLMAgent(base_url, api_key, model_name, temperature=0.1, verbose=verbose)
+    agent.reset()
+
+    print("=" * 70)
+    print(f"CrisisOps — Episode Replay  (seed={seed}, level={level})")
+    print("=" * 70)
+    print(f"Initial state: {_format_obs_summary(obs)}")
+    print()
+
+    step = 0
+    done = False
+    action_log: List[str] = []
+
+    while not done and step < MAX_STEPS:
+        t0 = time.time()
+        action = agent.act(obs)
+        obs, reward, done, info = env.step(action)
+        elapsed = time.time() - t0
+        step += 1
+
+        action_type = action.get("action_type", "unknown")
+        params = action.get("params", {})
+        narrative = _format_action(action_type, params)
+
+        # Deception annotation
+        deceptive = agent._memory.get("deceptive", {})
+        tag = ""
+        if "member_id" in params and params["member_id"] in deceptive:
+            tag = f" ← ⚠️ DECEPTIVE MEMBER"
+
+        line = f"  Step {step:2d}: {narrative}{tag}"
+        print(line)
+        action_log.append(line)
+
+        # Show deception detection events
+        if action_type == "query_observable_signals" and "member_id" in params:
+            mid = params["member_id"]
+            if mid in deceptive and mid not in DECEPTION_SIGNALS:
+                DECEPTION_SIGNALS.append(mid)
+                print(f"          → 🚨 DECEPTION DETECTED: {deceptive[mid]}")
+
+        if verbose:
+            print(f"          → {_format_obs_summary(obs)}")
+
+    # --- Greedy baseline comparison ---
+    greedy_env = CrisisOpsEnv(scenario_fn=scenario_fn, curriculum_level=level)
+    greedy_env.reset(seed=seed)
+    greedy = GreedyPMBaseline()
+    done_g = False
+    step_g = 0
+    while not done_g and step_g < MAX_STEPS:
+        action_g = greedy.act(greedy_env._state)
+        _, _, done_g, _ = greedy_env.step(action_g)
+        step_g += 1
+
+    agent_score = project_score(env._state)
+    greedy_score = project_score(greedy_env._state)
+    cf = agent_score - greedy_score
+
+    print()
+    print("=" * 70)
+    print("EPISODE SUMMARY")
+    print("=" * 70)
+    print(f"  Agent score:       {agent_score:.3f}")
+    print(f"  Greedy PM score:   {greedy_score:.3f}")
+    print(f"  Counterfactual:    {cf:+.3f}  {'✓ BEAT GREEDY' if cf > 0 else '✗ lost to greedy'}")
+    print(f"  Deceptive found:   {DECEPTION_SIGNALS}")
+    cvr = len(agent._memory.get('signals', {})) / max(1, len(obs.get('team_members', [])))
+    print(f"  Cross-verify rate: {cvr:.2f}")
+    print(f"  Total steps:       {step}")
+    print("=" * 70)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Replay a CrisisOps episode with narrative output")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--level", type=int, default=1, choices=[1, 2, 3, 4])
+    parser.add_argument("--model-path", type=str, default=None,
+                        help="Path to a saved model checkpoint directory")
+    parser.add_argument("--verbose", "-v", action="store_true")
+    args = parser.parse_args()
+    run_replay(seed=args.seed, level=args.level, model_path=args.model_path, verbose=args.verbose)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+CHANGE 4 — Fix colab_notebook.ipynb to be single-click runnable
+
+FILE: training/colab_notebook.ipynb
+
+The notebook must run end-to-end in a fresh Colab runtime with zero manual steps.
+Rewrite (or verify) the cells in this exact order:
+
+Cell 1 — Install dependencies:
+```python
+!pip install -q unsloth trl>=0.29.0 transformers datasets matplotlib --quiet
+!pip install -q mp-api pymatgen 2>/dev/null || true  # optional
+```
+
+Cell 2 — Clone or mount the repo (auto-detect Colab vs. local):
+```python
+import os, sys
+if "google.colab" in str(get_ipython()):
+    !git clone https://github.com/YOUR_REPO_URL /content/crisisops 2>/dev/null || print("already cloned")
+    os.chdir("/content/crisisops")
+sys.path.insert(0, os.getcwd())
+print("Working directory:", os.getcwd())
+```
+
+Cell 3 — Calibration check (must pass before training):
+```python
+from calibration.calibrate import run_calibration
+result = run_calibration(n_episodes=20, seed=99)
+assert result["status"] == "CALIBRATION PASSED", f"Calibration failed: {result}"
+print("✓ Calibration passed")
+```
+
+Cell 4 — Training (Level 1, 50 episodes for quick demo):
+```python
+from training.grpo_trainer import train
+train(curriculum_level=1, num_episodes=50, output_dir="./demo_run", seed=42)
+```
+
+Cell 5 — Show training curve:
+```python
+from IPython.display import Image
+Image("./demo_run/training_curve.png")
+```
+
+Cell 6 — Replay best checkpoint:
+```python
+import subprocess
+result = subprocess.run(
+    ["python", "-m", "baselines.replay", "--seed", "42", "--level", "1", "--verbose"],
+    capture_output=True, text=True
+)
+print(result.stdout)
+```
+
+Cell 7 — One-shot Jira demo write (dry_run=True by default):
+```python
+from deployment.jira_adapter import JiraAdapter
+adapter = JiraAdapter(dry_run=True)
+test_plan = {
+    "plan_summary": "Recovery plan: detected 2 deceptive members, reassigned 3 tasks, client satisfaction maintained at 8.2",
+    "risk_items": ["Budget 40% over", "Critical path blocked"],
+    "timeline": "2025-05-30"
+}
+adapter.submit_recovery_plan(test_plan)
+print("✓ Would write to Jira board (dry_run=True)")
+```
+
+Verify the notebook runs without error in a fresh Python kernel before the onsite.
+
+---
+
+CHANGE 5 — Verify tests still pass after all changes
+
+Run the full test suite:
+    cd crisisops && python -m pytest tests/ -v --tb=short
+
+Expected: all tests pass. If any test fails due to the _anti_loop_override change
+(Change 1), update the test to use the new category-based check:
+
+In tests/test_env.py or wherever anti-loop is tested:
+    # The override now triggers on 2 consecutive FREE-category actions,
+    # not 2 identical action types.
+    FREE_ACTIONS = {"query_status", "query_member_report", "query_observable_signals", "query_ticket"}
+
+---
+
+VERIFICATION AFTER ALL 5 CHANGES
+
+Run these in order and show me output:
+
+1. python -m pytest tests/ -v --tb=short
+   → all pass
+
+2. python -m baselines.llm_agent --episodes 5 --verbose
+   → LLM score > 0.30
+   → At least 4 distinct action types in distribution including reassign_task
+
+3. python -m baselines.replay --seed 42 --level 1 --verbose
+   → Prints narrative trace
+   → At least one DECEPTION DETECTED event
+   → Episode summary shows cf reward (positive or negative, doesn't matter — just works)
+
+4. python training/grpo_trainer.py (import test only):
+   python -c "from training.grpo_trainer import train, build_training_dataset; print('imports ok')"
+   → no ImportError
+
+Do not change any other files. Comment every changed line with # CHG-N [reason].
+```

@@ -25,6 +25,9 @@ import os
 import random
 from typing import Any, Dict, List, Optional
 
+# CHG-2: module-level reward log accumulated during training for export
+_training_reward_log: List[Dict] = []  # [{episode, reward, level}]
+
 # ---------------------------------------------------------------------------
 # Training hyperparameters — all named constants, no magic numbers
 # ---------------------------------------------------------------------------
@@ -484,6 +487,13 @@ def train(
                 # Approximate per-episode history from batch-level reward logs.
                 self._reward_history.extend([batch_reward] * GRPO_BATCH_SIZE)
 
+                # CHG-2: append to module-level reward log for post-training export
+                _training_reward_log.append({  # CHG-2: record each logged batch
+                    "episode": len(self._reward_history),
+                    "reward": batch_reward,
+                    "level": current_level,
+                })
+
                 episodes_completed = min(num_episodes, len(self._reward_history))
                 while episodes_completed >= self._next_level_check_episode:
                     current_level = _maybe_advance_curriculum(
@@ -500,6 +510,14 @@ def train(
                         f"Training log: episode {self._next_log_episode} "
                         f"| current_curriculum_level={current_level}"
                     )
+                    # CHG-2: save named checkpoint at each log interval for demo flexibility
+                    checkpoint_dir = os.path.join(output_dir, f"checkpoint_ep{self._next_log_episode}")  # CHG-2
+                    try:  # CHG-2
+                        model.save_pretrained(checkpoint_dir)  # CHG-2
+                        tokenizer.save_pretrained(checkpoint_dir)  # CHG-2
+                        print(f"Checkpoint saved: {checkpoint_dir}")  # CHG-2
+                    except Exception as e:  # CHG-2
+                        print(f"Checkpoint save failed: {e}")  # CHG-2
                     self._next_log_episode += CURRICULUM_LOG_INTERVAL
 
             return control
@@ -513,6 +531,45 @@ def train(
         callbacks=[_CurriculumProgressCallback()],
     )
     trainer.train()
+
+    # CHG-2: save full reward log as JSON
+    log_path = os.path.join(output_dir, "reward_log.json")  # CHG-2
+    with open(log_path, "w") as f:  # CHG-2
+        json.dump(_training_reward_log, f, indent=2)  # CHG-2
+    print(f"Reward log saved to {log_path}")  # CHG-2
+
+    # CHG-2: save training curve as PNG (no plt.show — save only)
+    try:  # CHG-2
+        import matplotlib  # CHG-2
+        matplotlib.use("Agg")  # CHG-2: non-interactive backend
+        import matplotlib.pyplot as plt  # CHG-2
+        episodes = [r["episode"] for r in _training_reward_log]  # CHG-2
+        rewards = [r["reward"] for r in _training_reward_log]  # CHG-2
+        levels = [r["level"] for r in _training_reward_log]  # CHG-2
+
+        fig, ax = plt.subplots(figsize=(10, 5))  # CHG-2
+        ax.plot(episodes, rewards, color="#2563eb", linewidth=1.5, label="CF Reward")  # CHG-2
+        ax.axhline(0, color="gray", linestyle="--", linewidth=0.8, label="Greedy baseline (0)")  # CHG-2
+
+        # CHG-2: shade regions by curriculum level
+        colors = {1: "#eff6ff", 2: "#ecfdf5", 3: "#fefce8", 4: "#fff1f2"}  # CHG-2
+        prev_ep, prev_lv = 0, levels[0] if levels else 1  # CHG-2
+        for i, (ep, lv) in enumerate(zip(episodes, levels)):  # CHG-2
+            if lv != prev_lv or i == len(episodes) - 1:  # CHG-2
+                ax.axvspan(prev_ep, ep, alpha=0.3, color=colors.get(prev_lv, "#f5f5f5"),  # CHG-2
+                           label=f"Level {prev_lv}")  # CHG-2
+                prev_ep, prev_lv = ep, lv  # CHG-2
+
+        ax.set_xlabel("Episode")  # CHG-2
+        ax.set_ylabel("Counterfactual Reward")  # CHG-2
+        ax.set_title("CrisisOps — Training Curve")  # CHG-2
+        ax.legend(loc="upper left")  # CHG-2
+        curve_path = os.path.join(output_dir, "training_curve.png")  # CHG-2
+        plt.savefig(curve_path, dpi=150, bbox_inches="tight")  # CHG-2
+        plt.close()  # CHG-2
+        print(f"Training curve saved to {curve_path}")  # CHG-2
+    except ImportError:  # CHG-2
+        print("matplotlib not available — skipping curve export")  # CHG-2
 
     print(f"\nTraining complete. Model saved to {output_dir}")
     model.save_pretrained(output_dir)

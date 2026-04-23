@@ -617,7 +617,9 @@ class LLMAgent:
         acts = self._memory["actions_taken"]
         if len(acts) >= MAX_CONSECUTIVE:
             recent = acts[-MAX_CONSECUTIVE:]
-            if all(a == action["action_type"] for a in recent):
+            FREE_ACTIONS = {"query_status", "query_member_report", "query_observable_signals", "query_ticket"}  # FIX-5: category set
+            is_all_free = all(a in FREE_ACTIONS for a in recent)  # FIX-5: check if last N were all free-category
+            if is_all_free and action["action_type"] in FREE_ACTIONS:  # FIX-5: trigger override when new action also free
                 # Replace with a more useful action
                 budget = observation.get("budget_remaining", 20)
                 unverified = self._next_unverified_member(observation)
@@ -699,10 +701,11 @@ class LLMAgent:
         memory_ctx = self._build_memory_context(observation)
         required_hint = self._build_required_action_hint(observation)
         obs_json = json.dumps(observation, indent=2, default=str)
-        user_content = (
+        user_content = (  # FIX-5: moved hint after JSON so weak models attend to it at generation time
             f"{memory_ctx}\n\n"
-            f"REQUIRED NEXT ACTION: {required_hint}\n\n"
-            f"CURRENT OBSERVATION:\n{obs_json}"
+            f"CURRENT OBSERVATION:\n{obs_json}\n\n"  # FIX-5: observation first (large blob)
+            f"***REQUIRED NEXT ACTION***: {required_hint}\n"  # FIX-5: hint last, right before generation
+            f"Respond with exactly one JSON object using the format in the system prompt."  # FIX-5: explicit format reminder
         )
 
         self._messages.append({"role": "user", "content": user_content})
