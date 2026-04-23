@@ -1,0 +1,5 @@
+This is CrisisOps, an OpenEnv reinforcement learning environment.
+Key invariant: TeamMember.actual_completion is ground truth, never exposed to agent.
+reported_completion = actual + (1 - candor) * inflation_bias — this is what agent sees.
+Observable signals (ticket_age_days, commits_last_72h, peer_mentions) always come from actual state.
+Reward is counterfactual: agent_project_score - greedy_PM_project_score.
