@@ -49,10 +49,12 @@ LEVEL2_UNLOCK_THRESHOLD = 0.15
 LEVEL3_UNLOCK_THRESHOLD = 0.25
 LEVEL4_UNLOCK_THRESHOLD = 0.35
 CURRICULUM_WINDOW       = 10   # episodes to average for unlock check
+CURRICULUM_LOG_INTERVAL = 50   # training log cadence for level visibility
 
 # Max steps per episode during training
 MAX_EPISODE_STEPS = 30
 
+# FIX: 1 Add hard anti-query-loop rule to force decisive paid actions.
 # System prompt for PM agent
 SYSTEM_PROMPT = """\
 You are an AI project manager recovering a failing software project.
@@ -84,6 +86,8 @@ STEP C - ACT (pick the highest-impact paid action):
     3. Blocked critical-path task and budget > 4 -> resolve_blocker
     4. Any unresolved crisis and budget > 3 -> reassign_task or escalate_risk
     5. Budget <= 3 OR all crises resolved -> submit_recovery_plan IMMEDIATELY
+
+MANDATORY ACTION RULE: You may call query_status or query_observable_signals at most TWICE IN A ROW. After two consecutive information-gathering actions, your next action MUST be a cost-1 or cost-2 decision action: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, or resolve_blocker. Failure to follow this rule means the project fails.
 
 === REQUIRED OUTPUT FORMAT ===
 Return exactly ONE JSON object per turn (no text before or after):
@@ -228,16 +232,20 @@ def _make_reward_fn(scenario_fn_or_generator, curriculum_level: int, model, toke
             # Sample scenario: use a seeded rng so the same ep_seed always
             # produces the same scenario type (reproducibility).
             if use_generator:
+                # FIX: 3 Read current generator level so newly unlocked levels
+                # are sampled on subsequent rollouts without rebuilding trainer.
+                rollout_level = scenario_fn_or_generator.curriculum_level
                 scenario_fn = scenario_fn_or_generator.get_scenario_fn(
                     rng=random.Random(ep_seed)
                 )
             else:
+                rollout_level = curriculum_level
                 scenario_fn = scenario_fn_or_generator
 
             # Fresh environment per completion
             env = CrisisOpsEnv(
                 scenario_fn=scenario_fn,
-                curriculum_level=curriculum_level,
+                curriculum_level=rollout_level,
             )
             obs = env.reset(seed=ep_seed)
 
@@ -344,6 +352,38 @@ def build_training_dataset(
     return dataset
 
 
+def _maybe_advance_curriculum(
+    current_level: int,
+    reward_history: List[float],
+    generator,
+    episode_idx: int,
+) -> int:
+    """
+    Advance curriculum using the last CURRICULUM_WINDOW rewards.
+
+    This helper is used inside training-time logging callbacks and dry-run
+    verification to keep unlock behavior consistent.
+    """
+    if len(reward_history) < CURRICULUM_WINDOW:
+        return current_level
+
+    window_mean = sum(reward_history[-CURRICULUM_WINDOW:]) / CURRICULUM_WINDOW
+    new_level = current_level
+    if current_level == 1 and window_mean > LEVEL2_UNLOCK_THRESHOLD:
+        new_level = 2
+    elif current_level == 2 and window_mean > LEVEL3_UNLOCK_THRESHOLD:
+        new_level = 3
+    elif current_level == 3 and window_mean > LEVEL4_UNLOCK_THRESHOLD:
+        new_level = 4
+
+    if new_level != current_level:
+        # FIX: 3 Emit explicit advancement message with episode index.
+        print(f"Curriculum: advancing to Level {new_level} at episode {episode_idx}")
+        generator.curriculum_level = new_level
+
+    return new_level
+
+
 def train(
     curriculum_level: int = 1,
     num_episodes: int = GRPO_NUM_TRAIN_EPISODES,
@@ -365,6 +405,7 @@ def train(
     try:
         from unsloth import FastLanguageModel
         from trl import GRPOTrainer, GRPOConfig
+        from transformers import TrainerCallback
         import torch
     except ImportError as e:
         raise ImportError(
@@ -428,33 +469,50 @@ def train(
     # so it can sample fresh scenario_fns inside each rollout.
     reward_fn = _make_reward_fn(generator, current_level, model, tokenizer)
 
+    # FIX: 3 Run curriculum checks during training via callback, not only after train().
+    class _CurriculumProgressCallback(TrainerCallback):
+        def __init__(self) -> None:
+            self._reward_history: List[float] = []
+            self._next_level_check_episode = CURRICULUM_LOG_INTERVAL
+            self._next_log_episode = CURRICULUM_LOG_INTERVAL
+
+        def on_log(self, args, state, control, logs=None, **kwargs):
+            nonlocal current_level
+            logs = logs or {}
+            if "train/reward" in logs:
+                batch_reward = float(logs["train/reward"])
+                # Approximate per-episode history from batch-level reward logs.
+                self._reward_history.extend([batch_reward] * GRPO_BATCH_SIZE)
+
+                episodes_completed = min(num_episodes, len(self._reward_history))
+                while episodes_completed >= self._next_level_check_episode:
+                    current_level = _maybe_advance_curriculum(
+                        current_level=current_level,
+                        reward_history=self._reward_history,
+                        generator=generator,
+                        episode_idx=self._next_level_check_episode,
+                    )
+                    self._next_level_check_episode += CURRICULUM_LOG_INTERVAL
+
+                while episodes_completed >= self._next_log_episode:
+                    # FIX: 3 Include current curriculum level in periodic training logs.
+                    print(
+                        f"Training log: episode {self._next_log_episode} "
+                        f"| current_curriculum_level={current_level}"
+                    )
+                    self._next_log_episode += CURRICULUM_LOG_INTERVAL
+
+            return control
+
     trainer = GRPOTrainer(
         model=model,
         tokenizer=tokenizer,
         reward_funcs=reward_fn,
         args=config,
         train_dataset=full_dataset,
+        callbacks=[_CurriculumProgressCallback()],
     )
     trainer.train()
-
-    # Reconstruct reward history from trainer logs for curriculum reporting.
-    if hasattr(trainer, "state") and trainer.state.log_history:
-        for log_item in trainer.state.log_history:
-            if "train/reward" in log_item:
-                reward_history.append(float(log_item["train/reward"]))
-
-    for reward_val in reward_history:
-        curriculum.record_reward(reward_val)
-
-    if len(reward_history) >= CURRICULUM_WINDOW:
-        window_mean = sum(reward_history[-CURRICULUM_WINDOW:]) / CURRICULUM_WINDOW
-        new_level = curriculum.check_unlock(window_mean)
-        if new_level != current_level:
-            current_level = new_level
-            print(
-                f"\n[Curriculum] Unlocked Level {current_level}! "
-                f"(window mean reward: {window_mean:.3f})"
-            )
 
     print(f"\nTraining complete. Model saved to {output_dir}")
     model.save_pretrained(output_dir)

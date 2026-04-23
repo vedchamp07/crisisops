@@ -89,6 +89,9 @@ MORALE_DECAY_PER_STEP = 0.05
 # Maximum steps in an episode before forced termination
 MAX_STEPS = 30
 
+# FIX: 1 Define loop-prone free query actions to enforce anti-stall behavior.
+FREE_QUERY_ACTION_TYPES = {"query_status", "query_observable_signals"}
+
 
 class CrisisOpsEnv:
     """
@@ -165,6 +168,8 @@ class CrisisOpsEnv:
         state.actions_used = []
         state.cross_verify_calls = 0
         state.total_member_query_calls = 0
+        # FIX: 1 Reset free-query loop counter at episode start.
+        state.consecutive_free_query_count = 0
         state.active_drift_events = []
         state.pending_drift_event = None
         state.drift_fire_step = None
@@ -216,6 +221,37 @@ class CrisisOpsEnv:
 
         # --- Dispatch action ---
         result = dispatch_action(action, state)
+
+        requested_action_type = action.get("action_type") if isinstance(action, dict) else None
+        if result.error is None:
+            if requested_action_type in FREE_QUERY_ACTION_TYPES:
+                state.consecutive_free_query_count += 1
+            else:
+                state.consecutive_free_query_count = 0
+
+        # FIX: 1 Force a paid stakeholder update when free-query loops hit 3.
+        if state.consecutive_free_query_count >= 3 and not state.done:
+            forced_action = {
+                "action_type": "communicate",
+                "params": {
+                    "message_type": "status_update",
+                    "content": "status_update",
+                    "target": "client",
+                },
+            }
+            forced_result = dispatch_action(forced_action, state)
+            state.consecutive_free_query_count = 0
+            warning_msg = (
+                f"[WARN] Forced communicate injected at step {state.current_step} "
+                "after 3 consecutive free-query actions."
+            )
+            print(warning_msg)
+            result.observation["forced_action"] = forced_action
+            result.observation["warning"] = warning_msg
+            if forced_result.error:
+                result.observation["forced_action_error"] = forced_result.error
+            if forced_result.done:
+                result.done = True
 
         # --- Advance step counter ---
         state.current_step += 1

@@ -264,6 +264,8 @@ class ProjectState:
     # Tracking for cross_verification_rate metric
     cross_verify_calls: int = 0          # query_observable_signals calls
     total_member_query_calls: int = 0    # query_member_report + query_observable_signals
+    # FIX: 1 Track repeated free-query actions to break query-only loops.
+    consecutive_free_query_count: int = 0
 
     # History
     actions_used: List[str] = field(default_factory=list)

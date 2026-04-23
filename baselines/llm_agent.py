@@ -237,6 +237,7 @@ def call_llm(
     return _call_openai_compatible(base_url, api_key, model, messages, temperature, max_tokens)
 
 
+# FIX: 1 Add hard anti-query-loop rule to inference prompt for decisive actions.
 # ---------------------------------------------------------------------------
 # System prompt — redesigned to force cross-verification and structured reasoning
 # ---------------------------------------------------------------------------
@@ -271,6 +272,8 @@ STEP C — ACT (pick the highest-impact paid action):
   3. Blocked critical-path task and budget > 4 → resolve_blocker
   4. Any unresolved crisis and budget > 3 → reassign_task or escalate_risk
   5. Budget ≤ 3 OR all crises resolved → submit_recovery_plan IMMEDIATELY
+
+MANDATORY ACTION RULE: You may call query_status or query_observable_signals at most TWICE IN A ROW. After two consecutive information-gathering actions, your next action MUST be a cost-1 or cost-2 decision action: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, or resolve_blocker. Failure to follow this rule means the project fails.
 
 === REQUIRED OUTPUT FORMAT ===
 Return exactly ONE JSON object per turn (no text before or after):
@@ -356,6 +359,8 @@ class LLMAgent:
         self._memory = {
             # member_id -> {ticket_age_days, commits_last_72h, peer_mentions}
             "signals": {},
+            # FIX: 1 Track queried self-reports so gather phase uses both query channels.
+            "member_reports": set(),
             # member_id -> human-readable reason string
             "deceptive": {},
             # list of action_type strings attempted this episode
@@ -381,6 +386,11 @@ class LLMAgent:
             signals = obs.get("signals", {})
             if member_id and signals:
                 self._memory["signals"][member_id] = signals
+
+        if obs.get("action_type") == "query_member_report":
+            member_id = obs.get("member_id")
+            if member_id:
+                self._memory["member_reports"].add(member_id)
 
         # Build current report map from base observation (always present)
         report_map: Dict[str, float] = {
@@ -533,6 +543,13 @@ class LLMAgent:
                 return m["member_id"]
         return None
 
+    def _next_member_without_report(self, observation: Dict[str, Any]) -> Optional[str]:
+        """Return the first member_id that has not yet had query_member_report called."""
+        for m in observation.get("team_members", []):
+            if m["member_id"] not in self._memory["member_reports"]:
+                return m["member_id"]
+        return None
+
     def _get_forced_action(self, observation: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Return a hard-coded action that overrides the LLM when the gather
@@ -566,6 +583,11 @@ class LLMAgent:
                     "target": "both",
                 },
             }
+
+        # FIX: 1 Gather phase first queries reports to avoid cross-verify=1.0 lock.
+        unreported = self._next_member_without_report(observation)
+        if unreported is not None:
+            return {"action_type": "query_member_report", "params": {"member_id": unreported}}
 
         # Gather phase: signal-verify every member before spending budget
         unverified = self._next_unverified_member(observation)

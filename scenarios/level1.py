@@ -35,9 +35,14 @@ from env.state import (
 # Parametric defaults for Level 1 — varied by CrisisGenerator
 # ---------------------------------------------------------------------------
 
+# FIX: 2 Slightly raise Level 1 severity to pull greedy/oracle calibration down.
 # Severity range for single crisis (Level 1 is moderate difficulty)
-L1_SEVERITY_MIN = 5.0
-L1_SEVERITY_MAX = 8.5
+L1_SEVERITY_MIN = 5.1
+L1_SEVERITY_MAX = 8.6
+
+# FIX: 2 Start deceptive members near-done to increase misleading self-report risk.
+DECEPTIVE_ACTUAL_COMPLETION_MIN = 0.60
+DECEPTIVE_ACTUAL_COMPLETION_MAX = 0.75
 
 # Team member velocity ranges
 VELOCITY_HIGH = (0.6, 0.9)
@@ -135,6 +140,11 @@ def scenario_integration_failure(rng: random.Random) -> ProjectState:
         _make_member("dev_bob",   "Bob",   "engineer",    VELOCITY_LOW,  AVAIL_LOW,  ["task_int_1"], rng),
         _make_member("dev_carol", "Carol", "qa_engineer", VELOCITY_HIGH, AVAIL_HIGH, ["task_int_3"], rng),
     ]
+    # FIX: 2 Bob is the deceptive member and should begin near done but stalled.
+    members[1].actual_completion = rng.uniform(
+        DECEPTIVE_ACTUAL_COMPLETION_MIN,
+        DECEPTIVE_ACTUAL_COMPLETION_MAX,
+    )
 
     crisis = Crisis(
         crisis_id="crisis_int",
@@ -211,6 +221,11 @@ def scenario_performance_regression(rng: random.Random) -> ProjectState:
         _make_member("dev_eve",   "Eve",   "backend_engineer", VELOCITY_HIGH, AVAIL_HIGH, ["task_perf_2"], rng),
         _make_member("dev_frank", "Frank", "qa_lead",          VELOCITY_HIGH, AVAIL_HIGH, ["task_perf_3"], rng),
     ]
+    # FIX: 2 Dave is the deceptive member and should begin near done but stalled.
+    members[0].actual_completion = rng.uniform(
+        DECEPTIVE_ACTUAL_COMPLETION_MIN,
+        DECEPTIVE_ACTUAL_COMPLETION_MAX,
+    )
 
     crisis = Crisis(
         crisis_id="crisis_perf",
@@ -287,6 +302,11 @@ def scenario_data_pipeline_failure(rng: random.Random) -> ProjectState:
         _make_member("dev_henry", "Henry",  "backend_engineer", VELOCITY_HIGH, AVAIL_HIGH, ["task_pipe_2"], rng),
         _make_member("dev_irene", "Irene",  "devops_engineer",  VELOCITY_HIGH, AVAIL_HIGH, ["task_pipe_3"], rng),
     ]
+    # FIX: 2 Grace is the deceptive member and should begin near done but stalled.
+    members[0].actual_completion = rng.uniform(
+        DECEPTIVE_ACTUAL_COMPLETION_MIN,
+        DECEPTIVE_ACTUAL_COMPLETION_MAX,
+    )
 
     crisis = Crisis(
         crisis_id="crisis_pipe",

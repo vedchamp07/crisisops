@@ -28,8 +28,9 @@ from env.state import (
 # Greedy PM behaviour constants
 # ---------------------------------------------------------------------------
 
+# FIX: 2 Adjust greedy communication cadence as a calibration parameter.
 # How often greedy PM sends a communication (steps between comms)
-GREEDY_COMM_INTERVAL = 5
+GREEDY_COMM_INTERVAL = 7
 
 # Greedy PM always uses this message type (status update, no initiative)
 GREEDY_COMM_MESSAGE_TYPE = "status_update"
@@ -73,8 +74,8 @@ class GreedyPMBaseline:
         self._steps_since_comm += 1
         self._step += 1
 
-        # Submit before budget exhaustion, even if crises remain unresolved.
-        if state.budget_remaining <= 3:
+        # FIX: 2 Tighten late submit threshold to reduce over-recovery in calibration.
+        if state.budget_remaining <= 2:
             return self._submit_plan()
 
         # --- Communication every 5 steps ---
