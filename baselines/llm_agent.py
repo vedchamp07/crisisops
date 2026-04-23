@@ -386,6 +386,7 @@ class LLMAgent:
             signals = obs.get("signals", {})
             if member_id and signals:
                 self._memory["signals"][member_id] = signals
+                # FIX 3: DEBUG: assert member_id in self._memory["signals"] after query_observable_signals
 
         if obs.get("action_type") == "query_member_report":
             member_id = obs.get("member_id")
@@ -573,8 +574,26 @@ class LLMAgent:
             )
             return {"action_type": "submit_recovery_plan", "params": {"plan_summary": summary}}
 
-        # Proactive communication before CLIENT_COMMUNICATION_WINDOW decay kicks in.
-        if step == 4 and "communicate" not in self._memory["actions_taken"]:
+        # FIX 1: Only force-gather for the first 2 members — let LLM decide the rest
+        FORCED_GATHER_LIMIT = 2  # FIX 1: cap was all-N, now capped at 2
+
+        reports_done = sum(1 for m in observation.get("team_members", [])
+                           if m["member_id"] in self._memory["member_reports"])
+        if reports_done < FORCED_GATHER_LIMIT:  # FIX 1: limit reports to 2
+            unreported = self._next_member_without_report(observation)
+            if unreported:
+                return {"action_type": "query_member_report",
+                        "params": {"member_id": unreported}}
+
+        signals_done = len(self._memory["signals"])
+        if signals_done < FORCED_GATHER_LIMIT:  # FIX 1: limit signals to 2
+            unverified = self._next_unverified_member(observation)
+            if unverified:
+                return {"action_type": "query_observable_signals",
+                        "params": {"member_id": unverified}}
+
+        # FIX 2: Force communicate at step 5 (after 4-step gather ends) if not yet done
+        if step >= 5 and "communicate" not in self._memory["actions_taken"]:  # FIX 2: was step==4
             return {
                 "action_type": "communicate",
                 "params": {
@@ -584,16 +603,7 @@ class LLMAgent:
                 },
             }
 
-        # FIX: 1 Gather phase first queries reports to avoid cross-verify=1.0 lock.
-        unreported = self._next_member_without_report(observation)
-        if unreported is not None:
-            return {"action_type": "query_member_report", "params": {"member_id": unreported}}
-
-        # Gather phase: signal-verify every member before spending budget
-        unverified = self._next_unverified_member(observation)
-        if unverified is not None:
-            return {"action_type": "query_observable_signals", "params": {"member_id": unverified}}
-
+        # After 4 forced actions (2 reports + 2 signals) + optional communicate, LLM decides
         return None
 
     def _anti_loop_override(
@@ -759,10 +769,14 @@ class LLMAgent:
                     if others:
                         target = others[0]["member_id"]
                         task = m["assigned_task_ids"][0]
+                        # FIX 3: debug print to confirm deception detection flows to hint
+                        print(f"  [DECEPTION HINT] member={m['member_id']} task={task} → reassign to {target}")
                         return (
                             f"Member {m['member_id']} is DECEPTIVE. "
                             f"Call reassign_task task_id={task} to_member_id={target}."
                         )
+            # FIX 3: debug — deceptive members found but no tasks to reassign
+            print(f"  [DECEPTION HINT] deceptive={list(deceptive_ids)} but no assigned tasks found on them")
 
         client_sat = observation.get("stakeholder", {}).get("client_satisfaction", 10)
         acts = self._memory["actions_taken"]
@@ -774,7 +788,7 @@ class LLMAgent:
         else:
             steps_since_last_comm = len(acts)
 
-        if (client_sat < 7 or steps_since_last_comm >= 4) and unresolved:
+        if (client_sat <= 7.5 or steps_since_last_comm >= 4) and unresolved:  # FIX 4: was < 7, now <= 7.5 so hint fires before sat decays below threshold
             return (
                 f"COMMUNICATION DUE (steps_since_comm={steps_since_last_comm}, "
                 f"sat={client_sat:.1f}). Call communicate with "
