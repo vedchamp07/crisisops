@@ -43,6 +43,7 @@ import json
 import os
 import sys
 import time
+from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
@@ -93,7 +94,7 @@ def _call_openai_compatible(
     model: str,
     messages: List[Dict[str, str]],
     temperature: float = 0.3,
-    max_tokens: int = 512,
+    max_tokens: int = 768,
 ) -> str:
     """Call an OpenAI-compatible chat/completions endpoint and return the text."""
     import urllib.request
@@ -129,7 +130,7 @@ def _call_anthropic(
     model: str,
     messages: List[Dict[str, str]],
     temperature: float = 0.3,
-    max_tokens: int = 512,
+    max_tokens: int = 768,
 ) -> str:
     """Call the Anthropic messages API directly (no SDK needed)."""
     import urllib.request
@@ -175,7 +176,7 @@ def _call_google(
     model: str,
     messages: List[Dict[str, str]],
     temperature: float = 0.3,
-    max_tokens: int = 512,
+    max_tokens: int = 768,
 ) -> str:
     """Call Google Gemini generateContent API directly (no SDK needed)."""
     import urllib.request
@@ -226,7 +227,7 @@ def call_llm(
     model: str,
     messages: List[Dict[str, str]],
     temperature: float = 0.3,
-    max_tokens: int = 512,
+    max_tokens: int = 768,
 ) -> str:
     """Dispatch to the right provider."""
     if base_url == "anthropic":
@@ -237,43 +238,79 @@ def call_llm(
 
 
 # ---------------------------------------------------------------------------
-# System prompt — reused from grpo_trainer.py
+# System prompt — redesigned to force cross-verification and structured reasoning
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
-You are an AI project manager (PM) responsible for recovering a failing software project.
+You are an AI project manager recovering a failing software project.
+CRITICAL: Some team members LIE about their progress to avoid accountability.
 
-Your team members may not be fully honest about their progress. Some members over-report
-their completion to avoid accountability. You must infer the truth from observable signals
-(ticket age, commit activity, peer mentions) and cross-reference with self-reports.
+The greedy baseline always trusts self-reports and FAILS. You win by detecting deception through observable signals.
 
-Available actions (return ONE action as JSON per turn):
-- {"action_type": "query_status", "params": {}}
-- {"action_type": "query_member_report", "params": {"member_id": "<id>"}}
-- {"action_type": "query_observable_signals", "params": {"member_id": "<id>"}}
-- {"action_type": "query_ticket", "params": {"task_id": "<id>"}}
-- {"action_type": "reassign_task", "params": {"task_id": "<id>", "to_member_id": "<id>"}}
-- {"action_type": "communicate", "params": {"message_type": "<type>", "content": "<text>", "target": "both"}}
-- {"action_type": "cut_scope", "params": {"task_id": "<id>", "justification": "<text>"}}
-- {"action_type": "escalate_risk", "params": {"crisis_id": "<id>", "risk_description": "<text>"}}
-- {"action_type": "request_resource", "params": {"resource_type": "<type>", "target_member_id": "<id>"}}
-- {"action_type": "update_timeline", "params": {"new_completion_date": "<date>", "task_estimates": {}}}
-- {"action_type": "consult_expert", "params": {}}
-- {"action_type": "resolve_blocker", "params": {"task_id": "<id>", "resolution_notes": "<text>"}}
-- {"action_type": "submit_recovery_plan", "params": {"plan_summary": "<text>", "risk_items": [], "timeline": "<date>"}}
+=== DECEPTION DETECTION RULES ===
+A member is DECEPTIVE when signals contradict their self-report:
+  • reported_completion > 0.5  AND  ticket_age_days > 3  AND  commits_last_72h == 0  → LYING
+  • reported_completion > 0.6  AND  ticket_age_days > 5                               → SUSPICIOUS
+  • Honest member: ticket_age_days is low (0-2), commits_last_72h >= 2
 
-Free actions (query_*) do not cost budget. resolve_blocker costs 2. All others cost 1.
-Budget starts at 20. Submit your recovery plan before budget reaches 0.
+=== MANDATORY PROCEDURE EACH TURN ===
+Follow these steps in order. Only take ONE action per turn.
 
-Strategy tips:
-1. Start by querying status and observable signals for each team member.
-2. Compare reported_completion with observable signals (ticket_age, commits) to detect deception.
-3. Reassign tasks from low-performing or deceptive members to high-performing ones.
-4. Communicate proactively to maintain client satisfaction.
-5. Use consult_expert when unsure.
-6. Submit recovery plan when crises are resolved or budget is running low.
+STEP A — GATHER (FREE, costs no budget):
+  If any team member has NOT been cross-verified yet → call query_observable_signals for them.
+  This is always your top priority until all members are verified.
 
-Return ONLY valid JSON. No prose before or after the JSON object."""
+STEP B — DETECT:
+  Compare each member's reported_completion with their signals.
+  Deceptive members have tasks that are NOT actually progressing — reassigning them helps.
+
+STEP C — ACT (pick the highest-impact paid action):
+  1. Deceptive member assigned to an unresolved crisis task → reassign_task to best available member
+  2. client_satisfaction < 6 → communicate {"message_type": "proactive_escalation_with_plan", ...}
+  3. Blocked critical-path task and budget > 4 → resolve_blocker
+  4. Any unresolved crisis and budget > 3 → reassign_task or escalate_risk
+  5. Budget ≤ 3 OR all crises resolved → submit_recovery_plan IMMEDIATELY
+
+=== REQUIRED OUTPUT FORMAT ===
+Return exactly ONE JSON object per turn (no text before or after):
+{
+  "reasoning": "signal evidence: X; inconsistency: Y; therefore action Z because ...",
+  "action_type": "action_name_here",
+  "params": { "param_key": "value" }
+}
+
+=== ACTION REFERENCE ===
+FREE (query_* never costs budget):
+  query_status {}
+  query_member_report {"member_id": "<id>"}
+  query_observable_signals {"member_id": "<id>"}
+  query_ticket {"task_id": "<id>"}
+
+COST-1 (deduct 1 from budget):
+  reassign_task {"task_id": "<id>", "to_member_id": "<id>"}
+  communicate {"message_type": "proactive_escalation_with_plan"|"risk_communication"|"status_update", "content": "<text>", "target": "both"}
+  escalate_risk {"crisis_id": "<id>", "risk_description": "<text>"}
+  update_timeline {"new_completion_date": "<date>", "task_estimates": {}}
+  consult_expert {}
+  submit_recovery_plan {"plan_summary": "<text>", "risk_items": [], "timeline": "<date>"}
+
+COST-2 (deduct 2 from budget):
+  resolve_blocker {"task_id": "<id>", "resolution_notes": "<text>"}
+
+Budget starts at 20. Exhausting budget without submitting = -0.30 penalty to your score.
+Always submit_recovery_plan before budget drops to 0.
+"""
+
+# Deception detection thresholds (tuned to candor.py signal scales)
+# COMMITS_FULL_VELOCITY=6 in candor.py → honest high-velocity member has 4-6 commits.
+# Self-preservation member (velocity 0.05-0.25) has 0-1 commits.
+_DECEPTION_REPORT_THRESHOLD  = 0.55  # reported_completion floor for all deception rules
+_DECEPTION_TICKET_AGE_DAYS   = 3     # stale ticket + high report = confirmed lying
+_DECEPTION_COMMITS_THRESHOLD = 1     # commits <= this triggers suspicious rule
+_SUSPICION_TICKET_AGE_DAYS   = 5     # ticket age floor for suspicious-only rule
+
+# Budget level below which the agent should stop spending and submit
+_SUBMIT_BUDGET_THRESHOLD = 3
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +318,20 @@ Return ONLY valid JSON. No prose before or after the JSON object."""
 # ---------------------------------------------------------------------------
 
 class LLMAgent:
-    """LLM-based PM agent that maintains conversation history within an episode."""
+    """
+    LLM-based PM agent with cross-verification memory and structured reasoning.
+
+    Key improvements over the naive baseline:
+    - Persistent per-episode memory: tracks which members have been signal-verified
+      and which are suspected deceptive.
+    - Memory context injected into every LLM turn so the model doesn't rely on
+      conversation history alone (which gets trimmed).
+    - Structured {reasoning, action_type, params} output format enables
+      chain-of-thought before each action.
+    - Local deception detection: Python-side cross-reference of signals vs.
+      reported values, so the agent's memory stays consistent even if the LLM
+      hallucinates a different member.
+    """
 
     def __init__(
         self,
@@ -297,21 +347,333 @@ class LLMAgent:
         self._temperature = temperature
         self._verbose = verbose
         self._messages: List[Dict[str, str]] = []
+        self._memory: Dict[str, Any] = {}
 
     def reset(self) -> None:
-        """Clear conversation history for a new episode."""
+        """Clear conversation history and memory for a new episode."""
         self._messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self._memory = {
+            # member_id -> {ticket_age_days, commits_last_72h, peer_mentions}
+            "signals": {},
+            # member_id -> human-readable reason string
+            "deceptive": {},
+            # list of action_type strings attempted this episode
+            "actions_taken": [],
+            "step": 0,
+        }
+
+    # ------------------------------------------------------------------
+    # Memory update — called at start of each act() from incoming obs
+    # ------------------------------------------------------------------
+
+    def _update_memory_from_obs(self, obs: Dict[str, Any]) -> None:
+        """
+        Extract observable signal data from the incoming observation and run
+        deception detection against current reported values.
+
+        Called before building the user message so the memory context is
+        always up-to-date before the LLM sees the observation.
+        """
+        # Extract signals if the last action was query_observable_signals
+        if obs.get("action_type") == "query_observable_signals":
+            member_id = obs.get("member_id")
+            signals = obs.get("signals", {})
+            if member_id and signals:
+                self._memory["signals"][member_id] = signals
+
+        # Build current report map from base observation (always present)
+        report_map: Dict[str, float] = {
+            m["member_id"]: m.get("reported_completion", 0.0)
+            for m in obs.get("team_members", [])
+        }
+
+        # Run deception detection for any member we have signals for
+        for mid, sigs in self._memory["signals"].items():
+            if mid in self._memory["deceptive"]:
+                continue
+            reported = report_map.get(mid, 0.0)
+            ticket_age = sigs.get("ticket_age_days", 0)
+            commits = sigs.get("commits_last_72h", 0)
+
+            # Rule 1: stale ticket + zero commits + high report = confirmed lying
+            deceptive_stale = (
+                reported > _DECEPTION_REPORT_THRESHOLD
+                and ticket_age > _DECEPTION_TICKET_AGE_DAYS
+                and commits == 0
+            )
+            # Rule 2: zero commits + high report (catches deception from episode start)
+            # COMMITS_FULL_VELOCITY=6 in candor.py → honest fast member has 4-6 commits.
+            # Self-preservation member with velocity≤0.05 has 0 commits even while lying.
+            deceptive_commits = (
+                reported > _DECEPTION_REPORT_THRESHOLD
+                and commits == 0
+                and ticket_age > 0  # at least 1 step old — exclude brand-new assignments
+            )
+            # Rule 3: minimal commits + high report + some ticket age = suspicious
+            suspicious = (
+                not deceptive_stale and not deceptive_commits
+                and reported > _DECEPTION_REPORT_THRESHOLD
+                and commits <= _DECEPTION_COMMITS_THRESHOLD
+                and (ticket_age > _SUSPICION_TICKET_AGE_DAYS or reported > 0.65)
+            )
+
+            if deceptive_stale or deceptive_commits:
+                reason = (
+                    f"reported={reported:.2f} but "
+                    f"ticket_age={ticket_age}d, commits={commits} → likely lying"
+                )
+                self._memory["deceptive"][mid] = reason
+                if self._verbose:
+                    print(f"  [DECEPTION DETECTED] {mid}: {reason}")
+            elif suspicious:
+                reason = (
+                    f"reported={reported:.2f} but "
+                    f"ticket_age={ticket_age}d, commits={commits} → suspicious"
+                )
+                self._memory["deceptive"][mid] = reason
+                if self._verbose:
+                    print(f"  [SUSPICIOUS] {mid}: {reason}")
+
+    def _build_memory_context(self, obs: Dict[str, Any]) -> str:
+        """
+        Build a compact memory summary to prepend to the current observation.
+
+        Highlights unverified members (next priority), deceptive members
+        (decision-critical), verified signals, and action history.
+        This prevents the LLM from having to reconstruct state from raw
+        conversation history that may be partially trimmed.
+        """
+        lines: List[str] = ["=== AGENT MEMORY ==="]
+
+        team = obs.get("team_members", [])
+        unverified = [
+            m["member_id"] for m in team
+            if m["member_id"] not in self._memory["signals"]
+        ]
+        if unverified:
+            lines.append(
+                f"UNVERIFIED MEMBERS (priority: call query_observable_signals "
+                f"for each before spending budget): {unverified}"
+            )
+
+        deceptive = self._memory["deceptive"]
+        if deceptive:
+            lines.append("DECEPTIVE / SUSPICIOUS MEMBERS (do NOT trust their reports):")
+            for mid, reason in deceptive.items():
+                lines.append(f"  - {mid}: {reason}")
+
+        verified = self._memory["signals"]
+        if verified:
+            lines.append("CROSS-VERIFIED SIGNALS:")
+            for mid, sigs in verified.items():
+                tag = " [DECEPTIVE]" if mid in deceptive else ""
+                lines.append(
+                    f"  - {mid}{tag}: ticket_age={sigs.get('ticket_age_days')}d,"
+                    f" commits={sigs.get('commits_last_72h')},"
+                    f" peers={sigs.get('peer_mentions')}"
+                )
+
+        acts = self._memory["actions_taken"]
+        budget = obs.get("budget_remaining", 20)
+        if acts:
+            lines.append(
+                f"ACTIONS THIS EPISODE ({len(acts)} total, last 6): "
+                f"{', '.join(acts[-6:])}"
+            )
+        if budget <= _SUBMIT_BUDGET_THRESHOLD:
+            lines.append(
+                f"*** BUDGET WARNING: only {budget} left — submit_recovery_plan NOW ***"
+            )
+
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Response parsing
+    # ------------------------------------------------------------------
+
+    def _parse_response(self, response: str, observation: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Parse LLM response into an action dict.
+
+        Accepts structured format:
+            {"reasoning": "...", "action_type": "...", "params": {...}}
+        Also accepts legacy format:
+            {"action_type": "...", "params": {...}}
+        Falls back to a smart action (never query_status) on parse failure.
+        """
+        try:
+            start = response.find("{")
+            end = response.rfind("}") + 1
+            if start == -1 or end == 0:
+                raise ValueError("No JSON object found in response")
+            data = json.loads(response[start:end])
+
+            reasoning = data.get("reasoning", "")
+            if reasoning and self._verbose:
+                print(f"  [REASONING] {reasoning[:220]}")
+
+            if "action_type" in data and "params" in data:
+                return {"action_type": data["action_type"], "params": data["params"]}
+
+            raise ValueError("Missing action_type or params")
+        except Exception:
+            if observation is not None:
+                return self._fallback_action(observation)
+            return {"action_type": "query_status", "params": {}}
+
+    # ------------------------------------------------------------------
+    # Python-side enforcement helpers
+    # ------------------------------------------------------------------
+
+    def _next_unverified_member(self, observation: Dict[str, Any]) -> Optional[str]:
+        """Return the first member_id that has not yet been signal-verified."""
+        for m in observation.get("team_members", []):
+            if m["member_id"] not in self._memory["signals"]:
+                return m["member_id"]
+        return None
+
+    def _get_forced_action(self, observation: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Return a hard-coded action that overrides the LLM when the gather
+        phase is incomplete.  Returns None when the LLM should decide.
+
+        Priority:
+        1. Unverified members → query_observable_signals (free, critical for detection)
+        2. Budget exhaustion → submit_recovery_plan immediately
+        """
+        budget = observation.get("budget_remaining", 20)
+
+        # Budget emergency: force submit before going negative
+        if budget <= _SUBMIT_BUDGET_THRESHOLD:
+            crises = observation.get("crises", [])
+            unresolved = [c["crisis_id"] for c in crises if not c.get("is_resolved")]
+            summary = (
+                f"Submitting recovery plan with budget={budget}. "
+                f"Unresolved crises: {unresolved}. "
+                f"Deceptive members: {list(self._memory['deceptive'].keys())}."
+            )
+            return {"action_type": "submit_recovery_plan", "params": {"plan_summary": summary}}
+
+        # Gather phase: signal-verify every member before spending budget
+        unverified = self._next_unverified_member(observation)
+        if unverified is not None:
+            return {"action_type": "query_observable_signals", "params": {"member_id": unverified}}
+
+        return None
+
+    def _anti_loop_override(
+        self, action: Dict[str, Any], observation: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Prevent the same action from repeating more than MAX_CONSECUTIVE times
+        in a row.  When the limit is exceeded, inject the next most useful action.
+        """
+        MAX_CONSECUTIVE = 2
+        acts = self._memory["actions_taken"]
+        if len(acts) >= MAX_CONSECUTIVE:
+            recent = acts[-MAX_CONSECUTIVE:]
+            if all(a == action["action_type"] for a in recent):
+                # Replace with a more useful action
+                budget = observation.get("budget_remaining", 20)
+                unverified = self._next_unverified_member(observation)
+                if unverified:
+                    override = {"action_type": "query_observable_signals",
+                                "params": {"member_id": unverified}}
+                elif budget <= _SUBMIT_BUDGET_THRESHOLD:
+                    crises = observation.get("crises", [])
+                    unresolved = [c["crisis_id"] for c in crises if not c.get("is_resolved")]
+                    summary = (
+                        f"Forced submit: repeated {action['action_type']} loop detected. "
+                        f"Unresolved: {unresolved}."
+                    )
+                    override = {"action_type": "submit_recovery_plan",
+                                "params": {"plan_summary": summary}}
+                else:
+                    # Pick first deceptive member's task to reassign
+                    deceptive_ids = list(self._memory["deceptive"].keys())
+                    team = observation.get("team_members", [])
+                    task_to_reassign = None
+                    reassign_target = None
+                    for m in team:
+                        if m["member_id"] in deceptive_ids and m.get("assigned_task_ids"):
+                            task_to_reassign = m["assigned_task_ids"][0]
+                        elif m["member_id"] not in deceptive_ids:
+                            reassign_target = m["member_id"]
+                    if task_to_reassign and reassign_target:
+                        override = {"action_type": "reassign_task",
+                                    "params": {"task_id": task_to_reassign,
+                                               "to_member_id": reassign_target}}
+                    else:
+                        crises = observation.get("crises", [])
+                        unresolved = [c for c in crises if not c.get("is_resolved")]
+                        if unresolved:
+                            override = {"action_type": "escalate_risk",
+                                        "params": {"crisis_id": unresolved[0]["crisis_id"],
+                                                   "risk_description": "Critical crisis blocking delivery"}}
+                        else:
+                            summary = (
+                                f"Loop-break forced submit. "
+                                f"Deceptive detected: {list(self._memory['deceptive'].keys())}."
+                            )
+                            override = {"action_type": "submit_recovery_plan",
+                                        "params": {"plan_summary": summary}}
+                if self._verbose:
+                    print(
+                        f"  [ANTI-LOOP] repeated '{action['action_type']}' "
+                        f"→ overriding with '{override['action_type']}'"
+                    )
+                return override
+        return action
+
+    # ------------------------------------------------------------------
+    # Main act() method
+    # ------------------------------------------------------------------
 
     def act(self, observation: Dict[str, Any]) -> Dict[str, Any]:
-        """Send observation to LLM, parse response into action dict."""
-        from training.grpo_trainer import parse_action_from_response
+        """
+        Send enriched observation to LLM, parse structured response into action dict.
 
-        obs_text = json.dumps(observation, indent=2, default=str)
-        self._messages.append({"role": "user", "content": obs_text})
+        Python-side enforcement runs first (gather phase + anti-loop).
+        Only falls through to the LLM when all members are verified and budget
+        is healthy — i.e., for the strategic ACT phase.
+        """
+        self._memory["step"] += 1
 
-        # Trim history to keep context manageable (keep system + last 10 turns)
+        # Update memory with any signal/report data in this observation
+        self._update_memory_from_obs(observation)
+
+        # Python-side forced gather / budget-emergency
+        forced = self._get_forced_action(observation)
+        if forced is not None:
+            if self._verbose:
+                print(f"  [FORCED] {forced['action_type']} params={forced['params']}")
+            self._memory["actions_taken"].append(forced["action_type"])
+            return forced
+
+        # Build user message: memory summary + current observation + explicit hint
+        memory_ctx = self._build_memory_context(observation)
+        required_hint = self._build_required_action_hint(observation)
+        obs_json = json.dumps(observation, indent=2, default=str)
+        user_content = (
+            f"{memory_ctx}\n\n"
+            f"REQUIRED NEXT ACTION: {required_hint}\n\n"
+            f"CURRENT OBSERVATION:\n{obs_json}"
+        )
+
+        self._messages.append({"role": "user", "content": user_content})
+
+        # Trim history to keep context manageable (keep system + last 20 turns)
         if len(self._messages) > 22:
             self._messages = self._messages[:1] + self._messages[-20:]
+
+        budget = observation.get("budget_remaining", 20)
+        step = self._memory["step"]
+        if self._verbose:
+            print(
+                f"  [Step {step}] budget={budget} | "
+                f"verified={list(self._memory['signals'].keys())} | "
+                f"deceptive={list(self._memory['deceptive'].keys())}"
+            )
 
         try:
             response = call_llm(
@@ -320,17 +682,77 @@ class LLMAgent:
                 self._model,
                 self._messages,
                 temperature=self._temperature,
+                max_tokens=768,
             )
         except Exception as e:
             if self._verbose:
-                print(f"  [LLM error: {e}] → fallback query_status")
-            return {"action_type": "query_status", "params": {}}
+                print(f"  [LLM error: {e}] → fallback")
+            return self._fallback_action(observation)
 
         if self._verbose:
-            print(f"  LLM → {response[:120]}{'...' if len(response) > 120 else ''}")
+            snippet = response[:200]
+            print(f"  LLM → {snippet}{'...' if len(response) > 200 else ''}")
 
         self._messages.append({"role": "assistant", "content": response})
-        return parse_action_from_response(response)
+        action = self._parse_response(response, observation)
+
+        # Anti-loop: prevent repeating same action more than 2 times in a row
+        action = self._anti_loop_override(action, observation)
+
+        # Record what was attempted (before env validates it)
+        self._memory["actions_taken"].append(action["action_type"])
+
+        return action
+
+    def _build_required_action_hint(self, observation: Dict[str, Any]) -> str:
+        """Build an explicit hint telling the LLM what to do this turn."""
+        budget = observation.get("budget_remaining", 20)
+        deceptive = self._memory["deceptive"]
+        team = observation.get("team_members", [])
+        crises = observation.get("crises", [])
+        unresolved = [c for c in crises if not c.get("is_resolved")]
+
+        if budget <= _SUBMIT_BUDGET_THRESHOLD:
+            return f"Budget={budget} is critical → submit_recovery_plan NOW."
+
+        if deceptive:
+            deceptive_ids = set(deceptive.keys())
+            for m in team:
+                if m["member_id"] in deceptive_ids and m.get("assigned_task_ids"):
+                    # Find a non-deceptive reassignment target
+                    others = [x for x in team if x["member_id"] not in deceptive_ids]
+                    if others:
+                        target = others[0]["member_id"]
+                        task = m["assigned_task_ids"][0]
+                        return (
+                            f"Member {m['member_id']} is DECEPTIVE. "
+                            f"Call reassign_task task_id={task} to_member_id={target}."
+                        )
+
+        client_sat = observation.get("stakeholder", {}).get("client_satisfaction", 10)
+        if client_sat < 6 and unresolved:
+            return (
+                f"client_satisfaction={client_sat} is LOW. "
+                f"Call communicate with message_type=proactive_escalation_with_plan."
+            )
+
+        if unresolved and budget > 4:
+            c = unresolved[0]
+            return (
+                f"Crisis {c['crisis_id']} is unresolved (severity={c.get('severity')}). "
+                f"Call escalate_risk or reassign_task for affected tasks."
+            )
+
+        return "All crises resolved or budget low → submit_recovery_plan."
+
+    def _fallback_action(self, observation: Dict[str, Any]) -> Dict[str, Any]:
+        """Smart fallback used on LLM error — never returns query_status."""
+        unverified = self._next_unverified_member(observation)
+        if unverified:
+            return {"action_type": "query_observable_signals",
+                    "params": {"member_id": unverified}}
+        self._memory["actions_taken"].append("query_status")
+        return {"action_type": "query_status", "params": {}}
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +808,7 @@ def run_eval(
     greedy_scores: List[float] = []
     cf_rewards: List[float] = []
     all_metrics: List[Dict] = []
+    action_counter: Counter = Counter()
 
     for i in range(n_episodes):
         seed = seed_base + i
@@ -408,6 +831,9 @@ def run_eval(
         llm_score = project_score(llm_env._state)
         metrics = compute_all_metrics(llm_env._state)
 
+        # Aggregate action distribution
+        action_counter.update(llm_env._state.actions_used)
+
         # --- Greedy baseline (same scenario + seed) ---
         greedy_env = CrisisOpsEnv(scenario_fn=scenario_fn, curriculum_level=curriculum_level)
         greedy_env.reset(seed=seed)
@@ -429,11 +855,17 @@ def run_eval(
         cf_rewards.append(cf)
         all_metrics.append(metrics)
 
+        # Count deceptive members detected by the Python-side memory
+        deceptive_count = len(agent._memory.get("deceptive", {}))
+
         status = "✓" if cf > 0 else "✗"
-        print(f"  Ep {i+1:2d} | seed={seed} | LLM={llm_score:.3f} | "
-              f"greedy={greedy_score:.3f} | cf={cf:+.3f} {status} | "
-              f"cvr={metrics.get('cross_verification_rate', 0):.2f} | "
-              f"{elapsed:.1f}s")
+        print(
+            f"  Ep {i+1:2d} | seed={seed} | LLM={llm_score:.3f} | "
+            f"greedy={greedy_score:.3f} | cf={cf:+.3f} {status} | "
+            f"cvr={metrics.get('cross_verification_rate', 0):.2f} | "
+            f"deceptive_detected={deceptive_count} | "
+            f"{elapsed:.1f}s"
+        )
 
     # --- Summary ---
     import statistics
@@ -452,8 +884,15 @@ def run_eval(
     print(f"Cross-verify rate (avg): {avg_cvr:.3f}")
     print("-" * 70)
 
+    # Action distribution
+    if action_counter:
+        print("Action distribution (all episodes):")
+        for action_type, count in sorted(action_counter.items(), key=lambda x: -x[1]):
+            print(f"  {action_type:<30} {count:4d}")
+        print("-" * 70)
+
     if cf_mean > 0:
-        print(f"[RESULT] LLM agent beats greedy baseline by {cf_mean:+.3f} on average.")
+        print(f"[RESULT] *** LLM agent BEATS greedy baseline by {cf_mean:+.3f} on average. ***")
     else:
         print(f"[RESULT] LLM agent underperforms greedy baseline by {cf_mean:+.3f} on average.")
 
