@@ -59,6 +59,8 @@ class OracleAgent:
         """Track step count for communication timing."""
         self._step: int = 0
         self._communicated_after_drift: bool = False
+        self._queried_members: set = set()
+        self._reassigned_tasks: set = set()
 
     def act(self, state: ProjectState, env: CrisisOpsEnv) -> dict:
         """
@@ -76,9 +78,10 @@ class OracleAgent:
         """
         self._step += 1
 
-        # Always use observable signals for members not yet checked
+        # Query observable signals for suspicious members (once per member)
         for member in state.team_members:
-            if member.actual_velocity < 0.2:  # suspicious
+            if member.actual_velocity < 0.2 and member.member_id not in self._queried_members:
+                self._queried_members.add(member.member_id)
                 return {
                     "action_type": "query_observable_signals",
                     "params": {"member_id": member.member_id},
@@ -107,24 +110,27 @@ class OracleAgent:
                         },
                     }
 
-        # Reassign low-velocity member tasks to highest actual_availability member
+        # Reassign low-velocity member tasks to highest actual_availability member (once per task)
         for member in state.team_members:
             if member.actual_velocity < 0.3 and member.assigned_task_ids:
-                # Find better member
-                others = [
-                    m for m in state.team_members
-                    if m.member_id != member.member_id
-                ]
-                if others:
-                    best = max(others, key=lambda m: m.actual_availability)
-                    if best.actual_availability > member.actual_availability + 0.1:
-                        return {
-                            "action_type": "reassign_task",
-                            "params": {
-                                "task_id": member.assigned_task_ids[0],
-                                "to_member_id": best.member_id,
-                            },
-                        }
+                for tid in member.assigned_task_ids:
+                    if tid in self._reassigned_tasks:
+                        continue
+                    others = [
+                        m for m in state.team_members
+                        if m.member_id != member.member_id
+                    ]
+                    if others:
+                        best = max(others, key=lambda m: m.actual_availability)
+                        if best.actual_availability > member.actual_availability + 0.1:
+                            self._reassigned_tasks.add(tid)
+                            return {
+                                "action_type": "reassign_task",
+                                "params": {
+                                    "task_id": tid,
+                                    "to_member_id": best.member_id,
+                                },
+                            }
 
         # Communicate every 5 steps
         if self._step % 5 == 0:
@@ -205,9 +211,12 @@ def run_calibration() -> None:
     for i in range(N_CALIBRATION_EPISODES):
         seed = CALIBRATION_SEED_BASE + i
 
+        # Use the same scenario template for both agents in each episode
+        scenario_fn = get_random_level1_scenario()
+
         # Greedy PM
         greedy_env = CrisisOpsEnv(
-            scenario_fn=get_random_level1_scenario(),
+            scenario_fn=scenario_fn,
             curriculum_level=1,
         )
         greedy_score = _run_episode(greedy_env, None, seed=seed, is_oracle=False)
@@ -215,7 +224,7 @@ def run_calibration() -> None:
 
         # Oracle
         oracle_env = CrisisOpsEnv(
-            scenario_fn=get_random_level1_scenario(),
+            scenario_fn=scenario_fn,
             curriculum_level=1,
         )
         oracle_score = _run_episode(oracle_env, None, seed=seed, is_oracle=True)

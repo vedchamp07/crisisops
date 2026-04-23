@@ -32,7 +32,8 @@ crisisops/
 │   ├── jira_adapter.py    # Maps agent actions to Linear/Jira API calls
 │   └── mcp_server.py      # FastMCP server (OpenEnv HTTP endpoint)
 ├── baselines/
-│   └── random_agent.py    # Random agent for reward range sanity check
+│   ├── random_agent.py    # Random agent for reward range sanity check
+│   └── llm_agent.py       # LLM-based agent eval (any provider)
 ├── scenarios/
 │   ├── level1.py          # 3 templates: single crisis, one deceptive member
 │   ├── level2.py          # 3 templates: double crisis, two deceptive, schema drift
@@ -47,25 +48,42 @@ crisisops/
     └── test_curriculum.py
 ```
 
+## Quick start
+
+```bash
+# Install (requires Python 3.11+)
+pip install -r requirements.txt
+
+# Run tests
+pytest tests/ -v
+
+# Run calibration (required before training)
+python -m calibration.calibrate
+
+# Evaluate an LLM as the PM agent (see "LLM Evaluation" section below)
+export OPENAI_API_KEY=sk-...
+python -m baselines.llm_agent --episodes 5
+```
+
 ## Core mechanics
 
 ### Candor system
 
-Each team member has a hidden `candor` float (0–1) sampled once per episode:
+Each team member has a hidden `candor` float (0-1) sampled once per episode:
 
 | Level | Range | Behaviour |
 |---|---|---|
-| `honest` | 0.85–1.0 | Reports near-truth |
-| `optimism_bias` | 0.50–0.70 | Moderate inflation |
-| `self_preservation` | 0.10–0.40 | Heavy over-reporting |
+| `honest` | 0.85-1.0 | Reports near-truth |
+| `optimism_bias` | 0.50-0.70 | Moderate inflation |
+| `self_preservation` | 0.10-0.40 | Heavy over-reporting |
 
-**Deception formula:** `reported = actual + (1 − candor) × inflation_bias`
+**Deception formula:** `reported = actual + (1 - candor) * inflation_bias`
 
 The agent never sees `candor` directly. It must infer reliability by comparing reported completion against observable signals:
 
-- `ticket_age_days` — days since the member's ticket last changed status (derived from actual velocity)
-- `commits_last_72h` — commit count proxy (0 if actual progress stalled)
-- `peer_mentions` — how often this member appears in others' dependency chains
+- `ticket_age_days` -- days since the member's ticket last changed status (derived from actual velocity)
+- `commits_last_72h` -- commit count proxy (0 if actual progress stalled)
+- `peer_mentions` -- how often this member appears in others' dependency chains
 
 ### Action budget
 
@@ -78,27 +96,27 @@ Budget starts at **20**. Actions cost:
 | 2 | `resolve_blocker` |
 | Terminal | `submit_recovery_plan` |
 
-Budget exhaustion before `submit_recovery_plan` applies a −0.30 penalty to the agent's score.
+Budget exhaustion before `submit_recovery_plan` applies a -0.30 penalty to the agent's score.
 
 ### Counterfactual reward
 
 ```
-project_score = 0.5 × recovery_pct
-              + 0.3 × client_satisfaction_normalized
-              + 0.2 × team_morale_avg_normalized
+project_score = 0.5 * recovery_pct
+              + 0.3 * client_satisfaction_normalized
+              + 0.2 * team_morale_avg_normalized
 
-reward = project_score(agent_final_state) − project_score(greedy_PM_final_state)
+reward = project_score(agent_final_state) - project_score(greedy_PM_final_state)
 ```
 
 All three components use **actual** state, never reported state. The greedy PM runs in a deep-copied isolated environment starting from the same initial state.
 
 ### Schema drift (Level 2+)
 
-At a random step between 6–12, one of three drift events fires:
+At a random step between 6-12, one of three drift events fires:
 
-- `regulatory_change` — new compliance requirement blocks a feature
-- `client_scope_change` — one feature deprioritised, one added
-- `team_policy_change` — mandatory second-approver review (+1.5 days per task)
+- `regulatory_change` -- new compliance requirement blocks a feature
+- `client_scope_change` -- one feature deprioritised, one added
+- `team_policy_change` -- mandatory second-approver review (+1.5 days per task)
 
 The agent has 3 steps to acknowledge via `update_timeline` or `communicate` or a stakeholder satisfaction penalty applies.
 
@@ -111,27 +129,118 @@ The agent has 3 steps to acknowledge via `update_timeline` or `communicate` or a
 | 3 | 3 | Majority | Yes |
 | 4 | 4 | All (info war) | Yes |
 
-Level unlocks: reward window mean > 0.15 → L2, > 0.25 → L3, > 0.35 → L4.
+Level unlocks: reward window mean > 0.15 -> L2, > 0.25 -> L3, > 0.35 -> L4.
 
-## Quick start
+## LLM evaluation
+
+Evaluate any LLM as the PM agent against the greedy baseline. No SDK required -- uses raw HTTP for all providers.
+
+### Supported providers
+
+Set **one** environment variable to select your provider:
+
+| Env var | Provider | Default model |
+|---|---|---|
+| `OPENAI_API_KEY` | OpenAI | `gpt-4o-mini` |
+| `ANTHROPIC_API_KEY` | Anthropic | `claude-sonnet-4-20250514` |
+| `GOOGLE_API_KEY` | Google Gemini | `gemini-2.0-flash` |
+| `GROQ_API_KEY` | Groq | `llama-3.1-70b-versatile` |
+| `TOGETHER_API_KEY` | Together AI | `meta-llama/Llama-3-70b-chat-hf` |
+| `OPENROUTER_API_KEY` | OpenRouter | `openrouter/auto` |
+| `OLLAMA_MODEL` | Local Ollama | `llama3.1` (no API key needed) |
+| `LLM_BASE_URL` + `LLM_API_KEY` | Any OpenAI-compatible | (specify with `--model`) |
+
+### Running evaluations
 
 ```bash
-# Install (requires Python 3.11+)
-pip install -r requirements.txt
+# OpenAI
+export OPENAI_API_KEY=sk-...
+python -m baselines.llm_agent --episodes 10 --model gpt-4o
 
-# Run calibration (required before training)
-python -m calibration.calibrate
+# Anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+python -m baselines.llm_agent --episodes 5 --model claude-sonnet-4-20250514
 
-# Run tests
-pytest tests/ -v
+# Google Gemini
+export GOOGLE_API_KEY=AI...
+python -m baselines.llm_agent --model gemini-2.0-flash
 
-# Start MCP server (for OpenEnv HTTP interface)
-python -m deployment.mcp_server
+# Groq (fast inference)
+export GROQ_API_KEY=gsk_...
+python -m baselines.llm_agent --model llama-3.1-70b-versatile
+
+# Together AI
+export TOGETHER_API_KEY=...
+python -m baselines.llm_agent --model meta-llama/Llama-3-70b-chat-hf
+
+# Local Ollama (no key needed)
+export OLLAMA_MODEL=llama3.1
+python -m baselines.llm_agent
+
+# Any OpenAI-compatible endpoint (vLLM, LM Studio, etc.)
+export LLM_BASE_URL=http://localhost:8080/v1
+export LLM_API_KEY=any
+python -m baselines.llm_agent --model my-model
+
+# Options
+python -m baselines.llm_agent --episodes 10 --seed 42 --temperature 0.5 --level 2 -v
 ```
+
+### CLI options
+
+| Flag | Default | Description |
+|---|---|---|
+| `--episodes` | 5 | Number of evaluation episodes |
+| `--model` | Provider default | Model name override |
+| `--seed` | 2000 | Starting random seed |
+| `--level` | 1 | Curriculum level (1-4) |
+| `--temperature` | 0.3 | Sampling temperature |
+| `-v` / `--verbose` | off | Print raw LLM responses |
+
+### Output
+
+Each episode reports:
+- **LLM score** -- the agent's `project_score` (0-1)
+- **Greedy score** -- baseline `project_score` on the same episode
+- **CF reward** -- counterfactual reward (positive = agent beat greedy)
+- **CVR** -- cross-verification rate (how often the agent checked signals vs reports)
+
+The summary compares the LLM against calibration targets:
+- Greedy PM target: 0.45-0.55
+- Oracle target: 0.70-0.80
+- An LLM scoring above 0.70 is performing at oracle level
+
+### Interpreting results
+
+A good PM agent should:
+1. **Query observable signals** for each team member (high cross-verification rate)
+2. **Detect deceptive members** by comparing reported completion against ticket age and commit activity
+3. **Reassign tasks** from deceptive/stalled members to productive ones
+4. **Communicate proactively** with stakeholders to maintain satisfaction
+5. **Submit a recovery plan** before budget runs out
+
+## Calibration
+
+Run calibration before training to verify the reward gap between the greedy baseline and oracle agent:
+
+```bash
+python -m calibration.calibrate
+```
+
+### Targets
+
+| Agent | Score target |
+|---|---|
+| Greedy PM | 0.45-0.55 |
+| Oracle | 0.70-0.80 |
+| Gap | 0.20-0.35 |
+
+If gap < 0.20: increase `inflation_bias` mean in `env/candor.py`.
+If gap > 0.35: reduce signal contradiction strength in `env/candor.py`.
 
 ## Training (Colab)
 
-Open `training/colab_notebook.ipynb` in Google Colab (GPU runtime). The notebook:
+GRPO training requires a GPU. Open `training/colab_notebook.ipynb` in Google Colab (T4+ runtime):
 
 1. Installs Unsloth + TRL
 2. Runs calibration
@@ -172,17 +281,6 @@ python -m deployment.mcp_server
 ```
 
 Exposes `reset`, `step`, `get_state`, and `health` as MCP tools.
-
-## Calibration targets
-
-| Agent | Score target |
-|---|---|
-| Greedy PM | 0.45–0.55 |
-| Oracle | 0.70–0.80 |
-| Gap | 0.20–0.35 |
-
-If gap < 0.20: increase `inflation_bias` mean in `env/candor.py`.
-If gap > 0.35: reduce signal contradiction strength in `env/candor.py`.
 
 ## Design invariants
 

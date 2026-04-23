@@ -73,7 +73,7 @@ BUDGET_EXHAUSTION_PENALTY = 0.30
 
 # Velocity advance per step — how much actual_completion advances for each
 # team member each step (scales with actual_velocity).
-COMPLETION_ADVANCE_PER_STEP = 0.06
+COMPLETION_ADVANCE_PER_STEP = 0.065
 
 # Morale passive decay per step (teams get tired in a crisis)
 MORALE_DECAY_PER_STEP = 0.05

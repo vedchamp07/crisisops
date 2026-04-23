@@ -52,6 +52,10 @@ class GreedyPMBaseline:
     def __init__(self) -> None:
         """Initialise baseline with a step counter for communication timing."""
         self._steps_since_comm: int = 0
+        self._step: int = 0
+        # Track last reassignment step per task to prevent immediate ping-pong
+        self._last_reassign_step: dict = {}  # task_id -> step
+        self._reassign_cooldown: int = 3  # steps before re-reassignment allowed
 
     def act(self, state: ProjectState) -> Dict[str, Any]:
         """
@@ -67,6 +71,7 @@ class GreedyPMBaseline:
               "It communicates once every 5 steps regardless of stakeholder state"
         """
         self._steps_since_comm += 1
+        self._step += 1
 
         # --- Communication every 5 steps ---
         if self._steps_since_comm >= GREEDY_COMM_INTERVAL:
@@ -88,11 +93,17 @@ class GreedyPMBaseline:
             return {"action_type": "query_status", "params": {}}
 
         # --- Reassign to highest reported availability member ---
+        # Cooldown: don't re-reassign the same task within N steps (avoids worst-case ping-pong)
+        last_step = self._last_reassign_step.get(blocking_task.task_id, -999)
+        if self._step - last_step < self._reassign_cooldown:
+            return {"action_type": "query_status", "params": {}}
+
         best_member = self._pick_best_member_reported(state, blocking_task.assigned_member_id)
         if best_member is None or best_member.member_id == blocking_task.assigned_member_id:
             # Can't improve assignment — communicate if due, else query
             return {"action_type": "query_status", "params": {}}
 
+        self._last_reassign_step[blocking_task.task_id] = self._step
         return {
             "action_type": "reassign_task",
             "params": {
