@@ -636,34 +636,38 @@ class LLMAgent:
                     override = {"action_type": "submit_recovery_plan",
                                 "params": {"plan_summary": summary}}
                 else:
-                    # Pick first deceptive member's task to reassign
-                    deceptive_ids = list(self._memory["deceptive"].keys())
-                    team = observation.get("team_members", [])
-                    task_to_reassign = None
-                    reassign_target = None
-                    for m in team:
-                        if m["member_id"] in deceptive_ids and m.get("assigned_task_ids"):
-                            task_to_reassign = m["assigned_task_ids"][0]
-                        elif m["member_id"] not in deceptive_ids:
-                            reassign_target = m["member_id"]
-                    if task_to_reassign and reassign_target:
-                        override = {"action_type": "reassign_task",
-                                    "params": {"task_id": task_to_reassign,
-                                               "to_member_id": reassign_target}}
-                    else:
-                        crises = observation.get("crises", [])
-                        unresolved = [c for c in crises if not c.get("is_resolved")]
-                        if unresolved:
-                            override = {"action_type": "escalate_risk",
-                                        "params": {"crisis_id": unresolved[0]["crisis_id"],
-                                                   "risk_description": "Critical crisis blocking delivery"}}
-                        else:
-                            summary = (
-                                f"Loop-break forced submit. "
-                                f"Deceptive detected: {list(self._memory['deceptive'].keys())}."
-                            )
-                            override = {"action_type": "submit_recovery_plan",
-                                        "params": {"plan_summary": summary}}
+                    # BUG-FIX-1: check deceptive reassign BEFORE checking unverified members
+                    deceptive_ids = list(self._memory["deceptive"].keys())  # BUG-FIX-1
+                    team = observation.get("team_members", [])  # BUG-FIX-1
+                    task_to_reassign = None  # BUG-FIX-1
+                    reassign_target = None  # BUG-FIX-1
+                    for m in team:  # BUG-FIX-1
+                        if m["member_id"] in deceptive_ids and m.get("assigned_task_ids"):  # BUG-FIX-1
+                            task_to_reassign = m["assigned_task_ids"][0]  # BUG-FIX-1
+                        elif m["member_id"] not in deceptive_ids and m.get("reported_availability", 0) > 0.5:  # BUG-FIX-1
+                            reassign_target = m["member_id"]  # BUG-FIX-1: filter for available target
+
+                    if task_to_reassign and reassign_target:  # BUG-FIX-1
+                        return {"action_type": "reassign_task",  # BUG-FIX-1
+                                "params": {"task_id": task_to_reassign, "to_member_id": reassign_target}}  # BUG-FIX-1
+
+                    # Only fall through to escalate/communicate if no deceptive reassign available
+                    crises = observation.get("crises", [])  # BUG-FIX-1
+                    unresolved = [c for c in crises if not c.get("is_resolved")]  # BUG-FIX-1
+                    if unresolved:  # BUG-FIX-1
+                        return {"action_type": "escalate_risk",  # BUG-FIX-1
+                                "params": {"crisis_id": unresolved[0]["crisis_id"],  # BUG-FIX-1
+                                           "risk_description": "Critical crisis blocking delivery"}}  # BUG-FIX-1
+
+                    # Last resort: unverified signal query (still a free action but purposeful)
+                    unverified = self._next_unverified_member(observation)  # BUG-FIX-1
+                    if unverified:  # BUG-FIX-1
+                        return {"action_type": "query_observable_signals",  # BUG-FIX-1
+                                "params": {"member_id": unverified}}  # BUG-FIX-1
+
+                    # Nothing left to do: submit
+                    return {"action_type": "submit_recovery_plan",  # BUG-FIX-1
+                            "params": {"plan_summary": "Loop-break forced submit."}}  # BUG-FIX-1
                 if self._verbose:
                     print(
                         f"  [ANTI-LOOP] repeated '{action['action_type']}' "

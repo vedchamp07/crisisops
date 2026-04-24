@@ -90,7 +90,12 @@ MORALE_DECAY_PER_STEP = 0.05
 MAX_STEPS = 30
 
 # FIX: 1 Define loop-prone free query actions to enforce anti-stall behavior.
-FREE_QUERY_ACTION_TYPES = {"query_status", "query_observable_signals"}
+FREE_QUERY_ACTION_TYPES = {  # BUG-FIX-2: include all free queries in loop detection
+    "query_status",
+    "query_observable_signals",
+    "query_member_report",
+    "query_ticket",
+}
 
 
 class CrisisOpsEnv:

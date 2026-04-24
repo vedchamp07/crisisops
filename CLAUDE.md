@@ -1,6 +1,6 @@
 # CrisisOps
 
-Read prompt_v2.txt first. It is the authoritative spec.
+Read prompt_v3.txt first. It is the authoritative spec.
 Do not invent anything not in that file.
 Do not simplify reward components or the candor system.
 
@@ -12,4 +12,4 @@ Grep for `candor` in agent observation code before moving past environment.py â€
 
 ## Status
 
-Repo is empty. Build in the order specified at the bottom of prompt_v2.txt.
+Repo is empty. Build in the order specified at the bottom of prompt_v3.txt.
