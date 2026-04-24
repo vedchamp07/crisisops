@@ -1,0 +1,186 @@
+Read CLAUDE.md, baselines/llm_agent.py, calibration/calibrate.py, and
+training/colab_notebook.ipynb before making any change.
+
+There are FOUR fixes. Make only what is described. Comment every changed
+line with # FIX-[N].
+
+---
+
+FIX 1 — Restore deception detection by removing the early-gather system
+prompt instruction and enabling re-verification
+
+FILE: baselines/llm_agent.py
+
+Part A — Revert the system prompt STEP A change.
+Find the block that starts with:
+  "IMPORTANT: By the time you receive your first turn, ALL team members
+  have already been cross-verified..."
+
+Replace it with the original gather instruction:
+  "STEP A — GATHER (FREE, costs no budget):
+   After your first turn, some members may still be unverified. If any
+   team member has NOT been cross-verified yet, call
+   query_observable_signals for them — this is always valid. However,
+   after 2 consecutive free queries you MUST take a paid action before
+   querying again."
+
+Rationale: signals gathered at step 1-2 have ticket_age=0-1 days,
+below the 3-day detection threshold. The LLM must be allowed to
+re-verify at step 8+ when ticket_age rises to 4+ days and deception
+becomes detectable.
+
+Part B — In _get_forced_action, change the communicate condition.
+Current: "if step > team_size and communicate not in actions_taken"
+Change to: "if step > team_size + 2 and communicate not in actions_taken"
+
+Rationale: with 3-member teams, step > 3 fires communicate at step 4.
+The LLM only gets step 5 onward. Adding a 2-step buffer (step > 5)
+gives the LLM at least one turn before the forced communicate fires,
+so it can do re-verification at step 5 when ticket_age=2+ days.
+
+Part C — Lower the deceptive_commits detection threshold.
+Current:
+  deceptive_commits = (reported > _DECEPTION_REPORT_THRESHOLD
+                       and commits == 0
+                       and ticket_age > 0)
+Change the commits check from == 0 to <= 1:
+  deceptive_commits = (reported > _DECEPTION_REPORT_THRESHOLD
+                       and commits <= 1   # FIX-1: was ==0, low-vel members produce commits=1
+                       and ticket_age > 0)
+
+Also lower _DECEPTION_TICKET_AGE_DAYS from 3 to 2:
+  _DECEPTION_TICKET_AGE_DAYS = 2  # FIX-1: was 3, detects at step 4 not step 6
+
+Rationale: VELOCITY_LOW = 0.05-0.25. At velocity 0.10-0.25, commits =
+round(v * 6) = 1. The rule with commits==0 only fires for velocity≤0.05
+(bottom 5% of deceptive members). With <= 1 it fires for velocity≤0.25
+(all deceptive members). Ticket age > 2 means detection fires at step 5
+(current_step=4, days=4//2=2), which is after the forced gather.
+
+---
+
+FIX 2 — Sync grpo_trainer.py system prompt with llm_agent.py
+
+FILE: training/grpo_trainer.py
+
+Find the SYSTEM_PROMPT in grpo_trainer.py.
+Find the equivalent block in baselines/llm_agent.py.
+Copy the STEP A, STEP B, STEP C, and MANDATORY ACTION RULE sections
+from llm_agent.py into grpo_trainer.py's SYSTEM_PROMPT verbatim.
+
+They must be identical. The training model and evaluation model must
+have the same behavioral instructions.
+
+Comment the changed section: # FIX-2: synced from llm_agent.py
+
+---
+
+FIX 3 — Fix calibrate.py signature and colab notebook call
+
+FILE: calibration/calibrate.py
+
+Change the function signature from:
+  def run_calibration() -> None:
+
+To:
+  def run_calibration(n_episodes: int = 20, seed: int = 1000) -> dict:
+
+Inside the function, replace the hardcoded N_CALIBRATION_EPISODES with
+the n_episodes parameter, and replace CALIBRATION_SEED_BASE with seed.
+
+At the end of the function, instead of just printing, return a dict:
+  return {
+      "status": "CALIBRATION PASSED" if all_passed else "CALIBRATION FAILED",
+      "greedy_mean": greedy_mean,
+      "oracle_mean": oracle_mean,
+      "gap": gap,
+  }
+
+where all_passed = (greedy passes AND oracle passes AND gap passes).
+
+FILE: training/colab_notebook.ipynb
+
+The calibration cell already calls run_calibration(n_episodes=20, seed=99)
+and asserts result["status"] == "CALIBRATION PASSED". Once Fix 3 makes
+the signature accept those params and return a dict, the cell will work.
+No change needed to the notebook itself.
+
+---
+
+FIX 4 — Fix the fallback early-submit (documented in CLAUDE.md)
+
+FILE: baselines/llm_agent.py
+LOCATION: _fallback_action method, the "Nothing actionable — submit" block
+
+Current logic: after one reassign + one escalate, submits immediately.
+This exits at step 7 of 30. Tasks complete at ~step 23. Submitting early
+means recovery_pct ≈ 0 → LLM scores ~0.31 vs greedy ~0.45.
+
+Replace the final "Nothing actionable — submit" block with a loop that
+keeps reassigning crisis tasks to members as tasks complete:
+
+    # FIX-4: keep reassigning until budget is low — don't submit early
+    # Find any unresolved crisis task not yet on the most available member
+    for crisis in unresolved:
+        for task_id in crisis.get("affected_task_ids", []):
+            # Find current holder
+            current_holder = next(
+                (m["member_id"] for m in team
+                 if task_id in m.get("assigned_task_ids", [])),
+                None,
+            )
+            # Find best available non-deceptive member
+            candidates = [m for m in team
+                         if m["member_id"] not in deceptive_ids
+                         and m.get("reported_availability", 0) > 0.3]
+            if not candidates:
+                candidates = team  # fallback: any member
+            best = max(candidates, key=lambda m: m.get("reported_availability", 0))
+            if current_holder != best["member_id"]:
+                reassign_key = f"{task_id}:{best['member_id']}"
+                attempted = self._memory.get("fallback_reassigns", set())
+                if reassign_key not in attempted:
+                    attempted.add(reassign_key)
+                    self._memory["fallback_reassigns"] = attempted
+                    self._memory["actions_taken"].append("reassign_task")
+                    return {"action_type": "reassign_task",
+                            "params": {"task_id": task_id,
+                                       "to_member_id": best["member_id"]}}
+
+    # Truly nothing left: communicate if overdue, then submit
+    acts = self._memory["actions_taken"]
+    steps_since_comm = next(
+        (i for i, a in enumerate(reversed(acts)) if a == "communicate"),
+        len(acts)
+    )
+    if steps_since_comm >= 5:
+        self._memory["actions_taken"].append("communicate")
+        return {"action_type": "communicate",
+                "params": {"message_type": "proactive_escalation_with_plan",
+                           "content": "Status update during recovery.",
+                           "target": "both"}}
+
+    self._memory["actions_taken"].append("submit_recovery_plan")
+    summary = (f"Fallback submit. Deceptive: {list(deceptive_ids)}. "
+               f"Unresolved: {[c['crisis_id'] for c in unresolved]}.")
+    return {"action_type": "submit_recovery_plan",
+            "params": {"plan_summary": summary}}
+
+---
+
+VERIFICATION
+
+Run: python -m baselines.llm_agent --episodes 5 --verbose
+with any working API key.
+
+Expected:
+1. At least 2 of 5 episodes show "deceptive_detected >= 1" in the summary
+2. Action distribution includes reassign_task at least 3 times
+3. No early submits at step 7 — episodes should run 10+ steps
+4. CF reward should be > -0.10 (better than current -0.137 from fallback-only)
+
+Also run: python -m calibration.calibrate
+Expected: still CALIBRATION PASSED (function change should be backwards
+compatible with default params).
+
+Do not change any other files.

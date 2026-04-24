@@ -1,6 +1,6 @@
 # CrisisOps
 
-Read prompt_v3.txt first. It is the authoritative spec.
+Read dump/prompt_v4.txt first. It is the authoritative spec.
 Do not invent anything not in that file.
 Do not simplify reward components or the candor system.
 
@@ -13,6 +13,7 @@ Grep for `candor` in agent observation code before moving past environment.py �
 ## Status
 
 Repo is built and calibrated. Calibration (2026-04-24):
+
 - Greedy: 0.549 ✓ (target 0.45–0.55)
 - Oracle: 0.887 (above target but gap is in spec)
 - Gap: 0.338 ✓ (target 0.20–0.35)
@@ -20,9 +21,10 @@ Repo is built and calibrated. Calibration (2026-04-24):
 ## Known issue — fallback submits too early (FIX THIS NEXT)
 
 `_fallback_action` in `baselines/llm_agent.py` exits in only 3 LLM steps:
-  1. step 5: reassign crisis task to best-available member (cost 1)
-  2. step 6: escalate_risk once (cost 1)
-  3. step 7: submit (nothing left to do → exits immediately)
+
+1. step 5: reassign crisis task to best-available member (cost 1)
+2. step 6: escalate_risk once (cost 1)
+3. step 7: submit (nothing left to do → exits immediately)
 
 This is triggered whenever the LLM API is unavailable (HTTP 403/429).
 The episode ends at step 7 out of 30. Tasks never complete → recovery_pct ≈ 0
@@ -40,7 +42,7 @@ even when there are 23 steps and 17 budget remaining.
 ### Fix required
 
 Replace the submit fallthrough with a loop that keeps reassigning tasks
-from low-availability members to high-availability ones until budget ≤ _SUBMIT_BUDGET_THRESHOLD.
+from low-availability members to high-availability ones until budget ≤ \_SUBMIT_BUDGET_THRESHOLD.
 Track which (task_id, member_id) pairs have been tried to avoid identical no-op reassigns,
 but allow re-reassignment after members change.
 

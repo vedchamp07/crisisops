@@ -257,10 +257,12 @@ A member is DECEPTIVE when signals contradict their self-report:
 === MANDATORY PROCEDURE EACH TURN ===
 Follow these steps in order. Only take ONE action per turn.
 
-IMPORTANT: By the time you receive your first turn, ALL team members have already been
-cross-verified via query_observable_signals. AGENT MEMORY will show CROSS-VERIFIED SIGNALS
-for every member. Do NOT call query_observable_signals or query_status at the start —
-go directly to STEP B then STEP C.
+STEP A — GATHER (FREE, costs no budget):  # FIX-1: restored gather instruction for re-verification
+  After your first turn, some members may still be unverified. If any  # FIX-1
+  team member has NOT been cross-verified yet, call  # FIX-1
+  query_observable_signals for them — this is always valid. However,  # FIX-1
+  after 2 consecutive free queries you MUST take a paid action before  # FIX-1
+  querying again.  # FIX-1
 
 STEP B — DETECT (do this mentally, no action needed):
   Compare each member's reported_completion with their signals.
@@ -275,10 +277,7 @@ STEP C — ACT (pick the highest-impact paid action, EVERY turn):
   4. Any unresolved crisis and budget > 3 → reassign_task or escalate_risk
   5. Budget ≤ 3 OR all crises resolved → submit_recovery_plan IMMEDIATELY
 
-STRICT QUERY LIMIT: After ALL members are verified (which they already are on turn 1),
-you may call any query action at most ONCE before you must take a paid action.
-Never call query_status twice in a row. Every free query must be immediately followed
-by a paid decision action. Failure to take paid actions means the project fails.
+MANDATORY ACTION RULE: You may call query_status or query_observable_signals at most TWICE IN A ROW. After two consecutive information-gathering actions, your next action MUST be a cost-1 or cost-2 decision action: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, or resolve_blocker. Failure to follow this rule means the project fails.  # FIX-1: restored mandatory action rule
 
 === REQUIRED OUTPUT FORMAT ===
 Return exactly ONE JSON object per turn (no text before or after):
@@ -314,7 +313,7 @@ Always submit_recovery_plan before budget drops to 0.
 # COMMITS_FULL_VELOCITY=6 in candor.py → honest high-velocity member has 4-6 commits.
 # Self-preservation member (velocity 0.05-0.25) has 0-1 commits.
 _DECEPTION_REPORT_THRESHOLD  = 0.55  # reported_completion floor for all deception rules
-_DECEPTION_TICKET_AGE_DAYS   = 3     # stale ticket + high report = confirmed lying
+_DECEPTION_TICKET_AGE_DAYS   = 2     # FIX-1: was 3, detects at step 4 not step 6
 _DECEPTION_COMMITS_THRESHOLD = 1     # commits <= this triggers suspicious rule
 _SUSPICION_TICKET_AGE_DAYS   = 5     # ticket age floor for suspicious-only rule
 
@@ -423,7 +422,7 @@ class LLMAgent:
             # Self-preservation member with velocity≤0.05 has 0 commits even while lying.
             deceptive_commits = (
                 reported > _DECEPTION_REPORT_THRESHOLD
-                and commits == 0
+                and commits <= 1   # FIX-1: was ==0, low-vel members produce commits=1
                 and ticket_age > 0  # at least 1 step old — exclude brand-new assignments
             )
             # Rule 3: minimal commits + high report + some ticket age = suspicious
@@ -593,7 +592,7 @@ class LLMAgent:
                         "params": {"member_id": unverified}}
 
         # Force one proactive communicate after all signals gathered (step > team_size)
-        if step > team_size and "communicate" not in self._memory["actions_taken"]:
+        if step > team_size + 2 and "communicate" not in self._memory["actions_taken"]:  # FIX-1: +2 buffer gives LLM a turn before forced communicate
             return {
                 "action_type": "communicate",
                 "params": {
@@ -865,12 +864,52 @@ class LLMAgent:
                         "params": {"crisis_id": crisis["crisis_id"],
                                    "risk_description": "Critical unresolved crisis"}}
 
-        # Nothing actionable — submit
-        self._memory["actions_taken"].append("submit_recovery_plan")
-        summary = (f"Fallback submit. Deceptive: {list(deceptive_ids)}. "
-                   f"Unresolved: {[c['crisis_id'] for c in unresolved]}.")
-        return {"action_type": "submit_recovery_plan",
-                "params": {"plan_summary": summary}}
+        # FIX-4: keep reassigning until budget is low — don't submit early
+        # Find any unresolved crisis task not yet on the most available member
+        for crisis in unresolved:  # FIX-4
+            for task_id in crisis.get("affected_task_ids", []):  # FIX-4
+                # Find current holder  # FIX-4
+                current_holder = next(  # FIX-4
+                    (m["member_id"] for m in team  # FIX-4
+                     if task_id in m.get("assigned_task_ids", [])),  # FIX-4
+                    None,  # FIX-4
+                )  # FIX-4
+                # Find best available non-deceptive member  # FIX-4
+                candidates = [m for m in team  # FIX-4
+                             if m["member_id"] not in deceptive_ids  # FIX-4
+                             and m.get("reported_availability", 0) > 0.3]  # FIX-4
+                if not candidates:  # FIX-4
+                    candidates = team  # fallback: any member  # FIX-4
+                best = max(candidates, key=lambda m: m.get("reported_availability", 0))  # FIX-4
+                if current_holder != best["member_id"]:  # FIX-4
+                    reassign_key = f"{task_id}:{best['member_id']}"  # FIX-4
+                    attempted = self._memory.get("fallback_reassigns", set())  # FIX-4
+                    if reassign_key not in attempted:  # FIX-4
+                        attempted.add(reassign_key)  # FIX-4
+                        self._memory["fallback_reassigns"] = attempted  # FIX-4
+                        self._memory["actions_taken"].append("reassign_task")  # FIX-4
+                        return {"action_type": "reassign_task",  # FIX-4
+                                "params": {"task_id": task_id,  # FIX-4
+                                           "to_member_id": best["member_id"]}}  # FIX-4
+
+        # Truly nothing left: communicate if overdue, then submit  # FIX-4
+        acts = self._memory["actions_taken"]  # FIX-4
+        steps_since_comm = next(  # FIX-4
+            (i for i, a in enumerate(reversed(acts)) if a == "communicate"),  # FIX-4
+            len(acts)  # FIX-4
+        )  # FIX-4
+        if steps_since_comm >= 5:  # FIX-4
+            self._memory["actions_taken"].append("communicate")  # FIX-4
+            return {"action_type": "communicate",  # FIX-4
+                    "params": {"message_type": "proactive_escalation_with_plan",  # FIX-4
+                               "content": "Status update during recovery.",  # FIX-4
+                               "target": "both"}}  # FIX-4
+
+        self._memory["actions_taken"].append("submit_recovery_plan")  # FIX-4
+        summary = (f"Fallback submit. Deceptive: {list(deceptive_ids)}. "  # FIX-4
+                   f"Unresolved: {[c['crisis_id'] for c in unresolved]}.")  # FIX-4
+        return {"action_type": "submit_recovery_plan",  # FIX-4
+                "params": {"plan_summary": summary}}  # FIX-4
 
 
 # ---------------------------------------------------------------------------

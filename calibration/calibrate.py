@@ -196,7 +196,7 @@ def _run_episode(
     return project_score(env._state)
 
 
-def run_calibration() -> None:
+def run_calibration(n_episodes: int = 20, seed: int = 1000) -> dict:  # FIX-3: accept params, return dict
     """
     Run the full calibration suite and print results with pass/fail verdict.
 
@@ -206,17 +206,17 @@ def run_calibration() -> None:
 
     print("=" * 60)
     print("CrisisOps v2 — Calibration")
-    print(f"Running {N_CALIBRATION_EPISODES} episodes each for Greedy PM and Oracle")
+    print(f"Running {n_episodes} episodes each for Greedy PM and Oracle")  # FIX-3: use param
     print("=" * 60)
 
     greedy_scores: List[float] = []
     oracle_scores: List[float] = []
 
-    for i in range(N_CALIBRATION_EPISODES):
-        seed = CALIBRATION_SEED_BASE + i
+    for i in range(n_episodes):  # FIX-3: use param instead of N_CALIBRATION_EPISODES
+        seed_i = seed + i  # FIX-3: use param instead of CALIBRATION_SEED_BASE
 
         # Deterministic scenario selection so both agents face identical episodes.
-        scenario_rng = random.Random(seed)
+        scenario_rng = random.Random(seed_i)  # FIX-3: use seed_i
         scenario_fn = LEVEL1_SCENARIOS[
             scenario_rng.randint(0, len(LEVEL1_SCENARIOS) - 1)
         ]
@@ -226,7 +226,7 @@ def run_calibration() -> None:
             scenario_fn=scenario_fn,
             curriculum_level=1,
         )
-        greedy_score = _run_episode(greedy_env, None, seed=seed, is_oracle=False)
+        greedy_score = _run_episode(greedy_env, None, seed=seed_i, is_oracle=False)  # FIX-3: use seed_i
         greedy_scores.append(greedy_score)
 
         # Oracle
@@ -234,11 +234,11 @@ def run_calibration() -> None:
             scenario_fn=scenario_fn,
             curriculum_level=1,
         )
-        oracle_score = _run_episode(oracle_env, None, seed=seed, is_oracle=True)
+        oracle_score = _run_episode(oracle_env, None, seed=seed_i, is_oracle=True)  # FIX-3: use seed_i
         oracle_scores.append(oracle_score)
 
         print(
-            f"  Episode {i+1:2d} | seed={seed} "
+            f"  Episode {i+1:2d} | seed={seed_i} "  # FIX-3: use seed_i
             f"| greedy={greedy_score:.3f} | oracle={oracle_score:.3f}"
         )
 
@@ -293,6 +293,18 @@ def run_calibration() -> None:
         print("       → Reduce signal contradiction strength in candor.py")
 
     print("=" * 60)
+
+    # FIX-3: return structured result for programmatic use
+    greedy_pass = GREEDY_SCORE_TARGET_LOW <= greedy_mean <= GREEDY_SCORE_TARGET_HIGH  # FIX-3
+    oracle_pass = ORACLE_SCORE_TARGET_LOW <= oracle_mean <= ORACLE_SCORE_TARGET_HIGH  # FIX-3
+    gap_pass = CALIBRATION_GAP_LOW <= gap <= CALIBRATION_GAP_HIGH  # FIX-3
+    all_passed = greedy_pass and oracle_pass and gap_pass  # FIX-3
+    return {  # FIX-3
+        "status": "CALIBRATION PASSED" if all_passed else "CALIBRATION FAILED",  # FIX-3
+        "greedy_mean": greedy_mean,  # FIX-3
+        "oracle_mean": oracle_mean,  # FIX-3
+        "gap": gap,  # FIX-3
+    }  # FIX-3
 
 
 if __name__ == "__main__":

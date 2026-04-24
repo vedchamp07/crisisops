@@ -74,23 +74,27 @@ A member is DECEPTIVE when signals contradict their self-report:
 === MANDATORY PROCEDURE EACH TURN ===
 Follow these steps in order. Only take ONE action per turn.
 
-STEP A - GATHER (FREE, costs no budget):
-    If any team member has NOT been cross-verified yet -> call query_observable_signals for them.
-    This is always your top priority until all members are verified.
-    BUT: if you have NOT communicated in the last 4 steps -> jump to STEP C rule 2 first.
+STEP A — GATHER (FREE, costs no budget):  # FIX-2: synced from llm_agent.py
+  After your first turn, some members may still be unverified. If any  # FIX-2: synced from llm_agent.py
+  team member has NOT been cross-verified yet, call  # FIX-2: synced from llm_agent.py
+  query_observable_signals for them — this is always valid. However,  # FIX-2: synced from llm_agent.py
+  after 2 consecutive free queries you MUST take a paid action before  # FIX-2: synced from llm_agent.py
+  querying again.  # FIX-2: synced from llm_agent.py
 
-STEP B - DETECT:
-    Compare each member's reported_completion with their signals.
-    Deceptive members have tasks that are NOT actually progressing - reassigning them helps.
+STEP B — DETECT (do this mentally, no action needed):  # FIX-2: synced from llm_agent.py
+  Compare each member's reported_completion with their signals.  # FIX-2: synced from llm_agent.py
+  Deceptive members have tasks that are NOT actually progressing — reassigning them helps.  # FIX-2: synced from llm_agent.py
+  Check AGENT MEMORY for members already flagged as DECEPTIVE / SUSPICIOUS.  # FIX-2: synced from llm_agent.py
 
-STEP C - ACT (pick the highest-impact paid action):
-    1. Deceptive member assigned to an unresolved crisis task -> reassign_task to best available member
-    2. Steps since last communicate >= 4 -> communicate {"message_type": "proactive_escalation_with_plan", ...}
-    3. Blocked critical-path task and budget > 4 -> resolve_blocker
-    4. Any unresolved crisis and budget > 3 -> reassign_task or escalate_risk
-    5. Budget <= 3 OR all crises resolved -> submit_recovery_plan IMMEDIATELY
+STEP C — ACT (pick the highest-impact paid action, EVERY turn):  # FIX-2: synced from llm_agent.py
+  1. DECEPTIVE member assigned to an unresolved crisis task → reassign_task to best available member.  # FIX-2: synced from llm_agent.py
+     This is ALWAYS priority 1 when a deceptive member holds a task.  # FIX-2: synced from llm_agent.py
+  2. Steps since last communicate >= 4 → communicate {"message_type": "proactive_escalation_with_plan", ...}  # FIX-2: synced from llm_agent.py
+  3. Blocked critical-path task and budget > 4 → resolve_blocker  # FIX-2: synced from llm_agent.py
+  4. Any unresolved crisis and budget > 3 → reassign_task or escalate_risk  # FIX-2: synced from llm_agent.py
+  5. Budget ≤ 3 OR all crises resolved → submit_recovery_plan IMMEDIATELY  # FIX-2: synced from llm_agent.py
 
-MANDATORY ACTION RULE: You may call query_status or query_observable_signals at most TWICE IN A ROW. After two consecutive information-gathering actions, your next action MUST be a cost-1 or cost-2 decision action: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, or resolve_blocker. Failure to follow this rule means the project fails.
+MANDATORY ACTION RULE: You may call query_status or query_observable_signals at most TWICE IN A ROW. After two consecutive information-gathering actions, your next action MUST be a cost-1 or cost-2 decision action: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, or resolve_blocker. Failure to follow this rule means the project fails.  # FIX-2: synced from llm_agent.py
 
 === REQUIRED OUTPUT FORMAT ===
 Return exactly ONE JSON object per turn (no text before or after):

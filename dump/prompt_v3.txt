@@ -1,0 +1,90 @@
+You are fixing two specific bugs in CrisisOps v2. Read the files first.
+Make only what's described. Comment every change with # BUG-FIX-[N].
+
+---
+
+BUG FIX 1 — anti-loop override returns free action, perpetuating the loop
+FILE: baselines/llm_agent.py
+LOCATION: _anti_loop_override method
+
+The current code's first branch returns query_observable_signals when there are
+unverified members. This is itself a FREE action, so the anti-loop fires again
+next turn, creating a rotation between free queries.
+
+REPLACE the entire branch logic inside the `else` block (where override is chosen)
+with this priority order — decisive paid actions first, free queries only as last resort:
+
+    # BUG-FIX-1: check deceptive reassign BEFORE checking unverified members
+    deceptive_ids = list(self._memory["deceptive"].keys())
+    team = observation.get("team_members", [])
+    task_to_reassign = None
+    reassign_target = None
+    for m in team:
+        if m["member_id"] in deceptive_ids and m.get("assigned_task_ids"):
+            task_to_reassign = m["assigned_task_ids"][0]
+        elif m["member_id"] not in deceptive_ids and m.get("reported_availability", 0) > 0.5:
+            reassign_target = m["member_id"]  # BUG-FIX-1: filter for available target
+   
+    if task_to_reassign and reassign_target:
+        return {"action_type": "reassign_task",
+                "params": {"task_id": task_to_reassign, "to_member_id": reassign_target}}
+   
+    # Only fall through to escalate/communicate if no deceptive reassign available
+    crises = observation.get("crises", [])
+    unresolved = [c for c in crises if not c.get("is_resolved")]
+    if unresolved:
+        return {"action_type": "escalate_risk",
+                "params": {"crisis_id": unresolved[0]["crisis_id"],
+                           "risk_description": "Critical crisis blocking delivery"}}
+   
+    # Last resort: unverified signal query (still a free action but purposeful)
+    unverified = self._next_unverified_member(observation)
+    if unverified:
+        return {"action_type": "query_observable_signals",
+                "params": {"member_id": unverified}}
+   
+    # Nothing left to do: submit
+    return {"action_type": "submit_recovery_plan",
+            "params": {"plan_summary": "Loop-break forced submit."}}
+
+CRITICAL: Do NOT return query_observable_signals as the first branch. Deceptive
+reassign must come first. The whole point of the override is to force a PAID action.
+
+---
+
+BUG FIX 2 — free query counter misses query_member_report
+FILE: env/environment.py
+LOCATION: line ~93, FREE_QUERY_ACTION_TYPES definition
+
+CURRENT:
+    FREE_QUERY_ACTION_TYPES = {"query_status", "query_observable_signals"}
+
+CHANGE TO:
+    FREE_QUERY_ACTION_TYPES = {  # BUG-FIX-2: include all free queries in loop detection
+        "query_status",
+        "query_observable_signals",
+        "query_member_report",
+        "query_ticket",
+    }
+
+This ensures the consecutive counter increments for ANY free query, not just two
+of the four. With this fix, the forced communicate at count=3 triggers correctly
+regardless of which free action the LLM chose.
+
+---
+
+VERIFICATION
+
+Run: python -m baselines.llm_agent --episodes 5 --verbose
+
+Expected:
+- action distribution must include reassign_task with count >= 3 across 5 episodes
+- query_status count should be < 25 total (down from 48 over 2 episodes)
+- LLM score should exceed 0.35
+- CF reward should be > -0.20 (closer to 0)
+
+If reassign_task still doesn't appear, add this debug print at the start of
+_anti_loop_override to confirm it's being reached:
+    print(f"[ANTI-LOOP] acts={acts[-3:]}, proposed={action['action_type']}, deceptive={list(self._memory['deceptive'].keys())}")
+
+Do not change any other files. Comment every line with # BUG-FIX-1 or # BUG-FIX-2.
