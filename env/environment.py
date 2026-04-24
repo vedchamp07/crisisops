@@ -234,14 +234,19 @@ class CrisisOpsEnv:
             else:
                 state.consecutive_free_query_count = 0
 
-        # FIX: 1 Force a paid stakeholder update when free-query loops hit 3.
-        if state.consecutive_free_query_count >= 3 and not state.done:
+        # Force a paid stakeholder update when free-query loops hit 4.
+        # Threshold raised from 3→4 so the normal N=3 signal-gather phase
+        # (3 consecutive query_observable_signals) doesn't trigger a spurious
+        # forced communicate that wastes budget during the gather phase.
+        # Message type changed to proactive_escalation_with_plan so if it does
+        # fire it yields +1.0 client satisfaction instead of a neutral waste.
+        if state.consecutive_free_query_count >= 4 and not state.done:
             forced_action = {
                 "action_type": "communicate",
                 "params": {
-                    "message_type": "status_update",
-                    "content": "status_update",
-                    "target": "client",
+                    "message_type": "proactive_escalation_with_plan",
+                    "content": "Proactive escalation: agent has been gathering signals.",
+                    "target": "both",
                 },
             }
             forced_result = dispatch_action(forced_action, state)

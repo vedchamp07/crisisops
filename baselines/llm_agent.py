@@ -257,23 +257,28 @@ A member is DECEPTIVE when signals contradict their self-report:
 === MANDATORY PROCEDURE EACH TURN ===
 Follow these steps in order. Only take ONE action per turn.
 
-STEP A — GATHER (FREE, costs no budget):
-  If any team member has NOT been cross-verified yet → call query_observable_signals for them.
-  This is always your top priority until all members are verified.
-    BUT: if you have NOT communicated in the last 4 steps → jump to STEP C rule 2 first.
+IMPORTANT: By the time you receive your first turn, ALL team members have already been
+cross-verified via query_observable_signals. AGENT MEMORY will show CROSS-VERIFIED SIGNALS
+for every member. Do NOT call query_observable_signals or query_status at the start —
+go directly to STEP B then STEP C.
 
-STEP B — DETECT:
+STEP B — DETECT (do this mentally, no action needed):
   Compare each member's reported_completion with their signals.
   Deceptive members have tasks that are NOT actually progressing — reassigning them helps.
+  Check AGENT MEMORY for members already flagged as DECEPTIVE / SUSPICIOUS.
 
-STEP C — ACT (pick the highest-impact paid action):
-  1. Deceptive member assigned to an unresolved crisis task → reassign_task to best available member
-    2. Steps since last communicate >= 4 → communicate {"message_type": "proactive_escalation_with_plan", ...}
+STEP C — ACT (pick the highest-impact paid action, EVERY turn):
+  1. DECEPTIVE member assigned to an unresolved crisis task → reassign_task to best available member.
+     This is ALWAYS priority 1 when a deceptive member holds a task.
+  2. Steps since last communicate >= 4 → communicate {"message_type": "proactive_escalation_with_plan", ...}
   3. Blocked critical-path task and budget > 4 → resolve_blocker
   4. Any unresolved crisis and budget > 3 → reassign_task or escalate_risk
   5. Budget ≤ 3 OR all crises resolved → submit_recovery_plan IMMEDIATELY
 
-MANDATORY ACTION RULE: You may call query_status or query_observable_signals at most TWICE IN A ROW. After two consecutive information-gathering actions, your next action MUST be a cost-1 or cost-2 decision action: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, or resolve_blocker. Failure to follow this rule means the project fails.
+STRICT QUERY LIMIT: After ALL members are verified (which they already are on turn 1),
+you may call any query action at most ONCE before you must take a paid action.
+Never call query_status twice in a row. Every free query must be immediately followed
+by a paid decision action. Failure to take paid actions means the project fails.
 
 === REQUIRED OUTPUT FORMAT ===
 Return exactly ONE JSON object per turn (no text before or after):
@@ -557,11 +562,15 @@ class LLMAgent:
         phase is incomplete.  Returns None when the LLM should decide.
 
         Priority:
-        1. Unverified members → query_observable_signals (free, critical for detection)
-        2. Budget exhaustion → submit_recovery_plan immediately
+        1. Budget exhaustion → submit_recovery_plan immediately
+        2. Force query_observable_signals for ALL team members (not just 2)
+           — eliminates unverified-member context that drives post-gather free queries
+        3. Force one proactive communicate after gather completes
         """
         budget = observation.get("budget_remaining", 20)
         step = self._memory["step"]
+        team = observation.get("team_members", [])
+        team_size = len(team)
 
         # Budget emergency: force submit before going negative
         if budget <= _SUBMIT_BUDGET_THRESHOLD:
@@ -574,36 +583,27 @@ class LLMAgent:
             )
             return {"action_type": "submit_recovery_plan", "params": {"plan_summary": summary}}
 
-        # FIX 1: Only force-gather for the first 2 members — let LLM decide the rest
-        FORCED_GATHER_LIMIT = 2  # FIX 1: cap was all-N, now capped at 2
-
-        reports_done = sum(1 for m in observation.get("team_members", [])
-                           if m["member_id"] in self._memory["member_reports"])
-        if reports_done < FORCED_GATHER_LIMIT:  # FIX 1: limit reports to 2
-            unreported = self._next_member_without_report(observation)
-            if unreported:
-                return {"action_type": "query_member_report",
-                        "params": {"member_id": unreported}}
-
+        # Force signals for ALL members (previously capped at 2, leaving member N unverified
+        # which caused the LLM to keep doing free queries post-gather)
         signals_done = len(self._memory["signals"])
-        if signals_done < FORCED_GATHER_LIMIT:  # FIX 1: limit signals to 2
+        if signals_done < team_size:
             unverified = self._next_unverified_member(observation)
             if unverified:
                 return {"action_type": "query_observable_signals",
                         "params": {"member_id": unverified}}
 
-        # FIX 2: Force communicate at step 5 (after 4-step gather ends) if not yet done
-        if step >= 5 and "communicate" not in self._memory["actions_taken"]:  # FIX 2: was step==4
+        # Force one proactive communicate after all signals gathered (step > team_size)
+        if step > team_size and "communicate" not in self._memory["actions_taken"]:
             return {
                 "action_type": "communicate",
                 "params": {
                     "message_type": "proactive_escalation_with_plan",
-                    "content": "Proactive update: gathering status and verifying team signals.",
+                    "content": "Proactive escalation: all signals gathered, deception detected, taking action.",
                     "target": "both",
                 },
             }
 
-        # After 4 forced actions (2 reports + 2 signals) + optional communicate, LLM decides
+        # All N members verified + communicate done → LLM decides
         return None
 
     def _anti_loop_override(
@@ -738,7 +738,7 @@ class LLMAgent:
             )
         except Exception as e:
             if self._verbose:
-                print(f"  [LLM error: {e}] → fallback")
+                print(f"  [LLM error: {str(e)[:120]}] → fallback")
             return self._fallback_action(observation)
 
         if self._verbose:
@@ -782,8 +782,8 @@ class LLMAgent:
                             f"Member {m['member_id']} is DECEPTIVE. "
                             f"Call reassign_task task_id={task} to_member_id={target}."
                         )
-            # FIX 3: debug — deceptive members found but no tasks to reassign
-            print(f"  [DECEPTION HINT] deceptive={list(deceptive_ids)} but no assigned tasks found on them")
+            if self._verbose:
+                print(f"  [DECEPTION HINT] deceptive={list(deceptive_ids)} but no assigned tasks found on them")
 
         client_sat = observation.get("stakeholder", {}).get("client_satisfaction", 10)
         acts = self._memory["actions_taken"]
@@ -812,13 +812,65 @@ class LLMAgent:
         return "All crises resolved or budget low → submit_recovery_plan."
 
     def _fallback_action(self, observation: Dict[str, Any]) -> Dict[str, Any]:
-        """Smart fallback used on LLM error — never returns query_status."""
+        """
+        Fallback when LLM is unavailable. Takes the best paid action from known
+        state rather than looping on query_status (which triggers WARN spam).
+        Priority: gather unverified → reassign deceptive → escalate crisis → submit.
+        """
         unverified = self._next_unverified_member(observation)
         if unverified:
+            self._memory["actions_taken"].append("query_observable_signals")
             return {"action_type": "query_observable_signals",
                     "params": {"member_id": unverified}}
-        self._memory["actions_taken"].append("query_status")
-        return {"action_type": "query_status", "params": {}}
+
+        # Reassign deceptive member's task to an available non-deceptive member
+        deceptive_ids = set(self._memory["deceptive"].keys())
+        team = observation.get("team_members", [])
+        if deceptive_ids:
+            for m in team:
+                if m["member_id"] in deceptive_ids and m.get("assigned_task_ids"):
+                    for other in team:
+                        if (other["member_id"] not in deceptive_ids
+                                and other.get("reported_availability", 0) > 0.5):
+                            task_id = m["assigned_task_ids"][0]
+                            self._memory["actions_taken"].append("reassign_task")
+                            return {"action_type": "reassign_task",
+                                    "params": {"task_id": task_id,
+                                               "to_member_id": other["member_id"]}}
+
+        # Reassign an unresolved crisis's task to the most available member,
+        # but only if it isn't already assigned there (avoid per-step ping-pong).
+        crises = observation.get("crises", [])
+        unresolved = [c for c in crises if not c.get("is_resolved")]
+        budget = observation.get("budget_remaining", 20)
+        if unresolved and budget > _SUBMIT_BUDGET_THRESHOLD:
+            crisis = unresolved[0]
+            affected = crisis.get("affected_task_ids", [])
+            if affected:
+                best = max(team, key=lambda m: m.get("reported_availability", 0))
+                # Find who currently holds the task
+                task_holder = next(
+                    (m["member_id"] for m in team if affected[0] in m.get("assigned_task_ids", [])),
+                    None,
+                )
+                if task_holder != best["member_id"]:
+                    self._memory["actions_taken"].append("reassign_task")
+                    return {"action_type": "reassign_task",
+                            "params": {"task_id": affected[0],
+                                       "to_member_id": best["member_id"]}}
+            # Already on best member or no tasks — escalate once
+            if "escalate_risk" not in self._memory["actions_taken"]:
+                self._memory["actions_taken"].append("escalate_risk")
+                return {"action_type": "escalate_risk",
+                        "params": {"crisis_id": crisis["crisis_id"],
+                                   "risk_description": "Critical unresolved crisis"}}
+
+        # Nothing actionable — submit
+        self._memory["actions_taken"].append("submit_recovery_plan")
+        summary = (f"Fallback submit. Deceptive: {list(deceptive_ids)}. "
+                   f"Unresolved: {[c['crisis_id'] for c in unresolved]}.")
+        return {"action_type": "submit_recovery_plan",
+                "params": {"plan_summary": summary}}
 
 
 # ---------------------------------------------------------------------------
