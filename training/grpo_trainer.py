@@ -92,7 +92,10 @@ STEP C — ACT (pick the highest-impact paid action, EVERY turn):  # FIX-2: sync
   2. Steps since last communicate >= 4 → communicate {"message_type": "proactive_escalation_with_plan", ...}  # FIX-2: synced from llm_agent.py
   3. Blocked critical-path task and budget > 4 → resolve_blocker  # FIX-2: synced from llm_agent.py
   4. Any unresolved crisis and budget > 3 → reassign_task or escalate_risk  # FIX-2: synced from llm_agent.py
-  5. Budget ≤ 3 OR all crises resolved → submit_recovery_plan IMMEDIATELY  # FIX-2: synced from llm_agent.py
+  5. Budget ≤ 5 OR all crises resolved → submit_recovery_plan IMMEDIATELY.  # FIX-5: synced from llm_agent.py, was ≤ 3
+     WARNING: Do NOT submit just because you have communicated and escalated.  # FIX-5: synced from llm_agent.py
+     A recovery plan requires tasks to COMPLETE. Keep reassigning until you  # FIX-5: synced from llm_agent.py
+     see is_resolved=true in the crisis list OR budget reaches 5.  # FIX-5: synced from llm_agent.py
 
 MANDATORY ACTION RULE: You may call query_status or query_observable_signals at most TWICE IN A ROW. After two consecutive information-gathering actions, your next action MUST be a cost-1 or cost-2 decision action: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, or resolve_blocker. Failure to follow this rule means the project fails.  # FIX-2: synced from llm_agent.py
 
@@ -123,7 +126,9 @@ COST-2 (deduct 2 from budget):
     resolve_blocker {"task_id": "<id>", "resolution_notes": "<text>"}
 
 Budget starts at 20. Exhausting budget without submitting = -0.30 penalty to your score.
-Always submit_recovery_plan before budget drops to 0.
+Only submit_recovery_plan when is_resolved=true for all crises, OR budget <= 5.  # FIX-5: synced from llm_agent.py
+Submitting early (before tasks complete) wastes the entire episode.  # FIX-5: synced from llm_agent.py
+Keep reassigning tasks every turn until one of these conditions is met.  # FIX-5: synced from llm_agent.py
 """
 
 

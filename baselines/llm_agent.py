@@ -275,7 +275,10 @@ STEP C — ACT (pick the highest-impact paid action, EVERY turn):
   2. Steps since last communicate >= 4 → communicate {"message_type": "proactive_escalation_with_plan", ...}
   3. Blocked critical-path task and budget > 4 → resolve_blocker
   4. Any unresolved crisis and budget > 3 → reassign_task or escalate_risk
-  5. Budget ≤ 3 OR all crises resolved → submit_recovery_plan IMMEDIATELY
+  5. Budget ≤ 5 OR all crises resolved → submit_recovery_plan IMMEDIATELY.  # FIX-5: was ≤ 3, raised to match intercept threshold
+     WARNING: Do NOT submit just because you have communicated and escalated.  # FIX-5
+     A recovery plan requires tasks to COMPLETE. Keep reassigning until you  # FIX-5
+     see is_resolved=true in the crisis list OR budget reaches 5.  # FIX-5
 
 MANDATORY ACTION RULE: You may call query_status or query_observable_signals at most TWICE IN A ROW. After two consecutive information-gathering actions, your next action MUST be a cost-1 or cost-2 decision action: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, or resolve_blocker. Failure to follow this rule means the project fails.  # FIX-1: restored mandatory action rule
 
@@ -306,7 +309,9 @@ COST-2 (deduct 2 from budget):
   resolve_blocker {"task_id": "<id>", "resolution_notes": "<text>"}
 
 Budget starts at 20. Exhausting budget without submitting = -0.30 penalty to your score.
-Always submit_recovery_plan before budget drops to 0.
+Only submit_recovery_plan when is_resolved=true for all crises, OR budget <= 5.  # FIX-5: replaced early-submit instruction
+Submitting early (before tasks complete) wastes the entire episode.  # FIX-5
+Keep reassigning tasks every turn until one of these conditions is met.  # FIX-5
 """
 
 # Deception detection thresholds (tuned to candor.py signal scales)
@@ -747,6 +752,10 @@ class LLMAgent:
         self._messages.append({"role": "assistant", "content": response})
         action = self._parse_response(response, observation)
 
+        # FIX-5: intercept premature submit — LLM submits too early when
+        # it feels "done" even though crisis is still unresolved with budget
+        action = self._block_premature_submit(action, observation)  # FIX-5
+
         # Anti-loop: prevent repeating same action more than 2 times in a row
         action = self._anti_loop_override(action, observation)
 
@@ -754,6 +763,74 @@ class LLMAgent:
         self._memory["actions_taken"].append(action["action_type"])
 
         return action
+
+    def _block_premature_submit(  # FIX-5
+        self, action: Dict[str, Any], observation: Dict[str, Any]  # FIX-5
+    ) -> Dict[str, Any]:  # FIX-5
+        """
+        Intercept submit_recovery_plan if crisis is unresolved and budget
+        is healthy. Replace it with the most useful available action.
+
+        The LLM tends to submit after communicate+escalate+reassign,
+        treating those as "done." We block this and force it to keep
+        acting until budget <= 5 or all crises are resolved.
+        FIX-5: core fix for premature episode termination.
+        """
+        if action.get("action_type") != "submit_recovery_plan":  # FIX-5
+            return action  # FIX-5: only intercept submits
+
+        budget = observation.get("budget_remaining", 20)  # FIX-5
+        crises = observation.get("crises", [])  # FIX-5
+        unresolved = [c for c in crises if not c.get("is_resolved")]  # FIX-5
+
+        # Allow submit when genuinely terminal  # FIX-5
+        if budget <= 5 or not unresolved:  # FIX-5
+            return action  # FIX-5: legitimate submit
+
+        # Crisis still active with healthy budget — override submit  # FIX-5
+        if self._verbose:  # FIX-5
+            print(  # FIX-5
+                f"  [SUBMIT BLOCKED] budget={budget}, "  # FIX-5
+                f"unresolved={[c['crisis_id'] for c in unresolved]} "  # FIX-5
+                f"→ forcing reassign instead"  # FIX-5
+            )  # FIX-5
+
+        team = observation.get("team_members", [])  # FIX-5
+        deceptive_ids = set(self._memory["deceptive"].keys())  # FIX-5
+
+        # Priority 1: reassign deceptive member's task  # FIX-5
+        for m in team:  # FIX-5
+            if m["member_id"] in deceptive_ids and m.get("assigned_task_ids"):  # FIX-5
+                candidates = [x for x in team  # FIX-5
+                              if x["member_id"] not in deceptive_ids  # FIX-5
+                              and x.get("reported_availability", 0) > 0.4]  # FIX-5
+                if candidates:  # FIX-5
+                    target = max(candidates,  # FIX-5
+                                 key=lambda x: x.get("reported_availability", 0))  # FIX-5
+                    return {"action_type": "reassign_task",  # FIX-5
+                            "params": {"task_id": m["assigned_task_ids"][0],  # FIX-5
+                                       "to_member_id": target["member_id"]}}  # FIX-5
+
+        # Priority 2: reassign any crisis-affected task to most available member  # FIX-5
+        for crisis in unresolved:  # FIX-5
+            for task_id in crisis.get("affected_task_ids", []):  # FIX-5
+                current_holder = next(  # FIX-5
+                    (m["member_id"] for m in team  # FIX-5
+                     if task_id in m.get("assigned_task_ids", [])),  # FIX-5
+                    None,  # FIX-5
+                )  # FIX-5
+                best = max(team,  # FIX-5
+                           key=lambda m: m.get("reported_availability", 0))  # FIX-5
+                if current_holder != best["member_id"]:  # FIX-5
+                    return {"action_type": "reassign_task",  # FIX-5
+                            "params": {"task_id": task_id,  # FIX-5
+                                       "to_member_id": best["member_id"]}}  # FIX-5
+
+        # Priority 3: update timeline to signal active management  # FIX-5
+        from datetime import datetime, timedelta  # FIX-5
+        new_date = (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d")  # FIX-5
+        return {"action_type": "update_timeline",  # FIX-5
+                "params": {"new_completion_date": new_date, "task_estimates": {}}}  # FIX-5
 
     def _build_required_action_hint(self, observation: Dict[str, Any]) -> str:
         """Build an explicit hint telling the LLM what to do this turn."""
