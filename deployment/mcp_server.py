@@ -45,57 +45,72 @@ def _get_env() -> CrisisOpsEnv:
     return _env
 
 
+def reset(seed: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Reset the CrisisOps environment.
+
+    Returns the initial observation dict.
+    Optionally accepts a seed for reproducible episodes.
+    """
+    env = _get_env()
+    obs = env.reset(seed=seed)
+    return obs
+
+
+def step(action: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Execute one action in the CrisisOps environment.
+
+    Action format: {"action_type": "<type>", "params": {...}}
+
+    Returns: {"observation": {...}, "reward": float, "done": bool, "info": {...}}
+    """
+    env = _get_env()
+    obs, reward, done, info = env.step(action)
+    return {
+        "observation": obs,
+        "reward": reward,
+        "done": done,
+        "info": info,
+    }
+
+
+def state() -> Dict[str, Any]:
+    """
+    Return the full serialisable state of the environment.
+
+    Includes true state (actual completions, candor levels) for debugging.
+    """
+    env = _get_env()
+    return env.state()
+
+
+def get_state() -> Dict[str, Any]:
+    """
+    Backward-compatible alias for state().
+
+    OpenEnv clients should call `state`; older internal callers may still
+    use `get_state`.
+    """
+    return state()
+
+
+def health() -> Dict[str, str]:
+    """Liveness check — always returns OK."""
+    return {"status": "ok", "service": "CrisisOps MCP Server"}
+
+
 # ---------------------------------------------------------------------------
 # Build MCP server if available
 # ---------------------------------------------------------------------------
 
 if _MCP_AVAILABLE:
     mcp = FastMCP("CrisisOps")
-
-    @mcp.tool()
-    def reset(seed: Optional[int] = None) -> Dict[str, Any]:
-        """
-        Reset the CrisisOps environment.
-
-        Returns the initial observation dict.
-        Optionally accepts a seed for reproducible episodes.
-        """
-        env = _get_env()
-        obs = env.reset(seed=seed)
-        return obs
-
-    @mcp.tool()
-    def step(action: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Execute one action in the CrisisOps environment.
-
-        Action format: {"action_type": "<type>", "params": {...}}
-
-        Returns: {"observation": {...}, "reward": float, "done": bool, "info": {...}}
-        """
-        env = _get_env()
-        obs, reward, done, info = env.step(action)
-        return {
-            "observation": obs,
-            "reward":      reward,
-            "done":        done,
-            "info":        info,
-        }
-
-    @mcp.tool()
-    def get_state() -> Dict[str, Any]:
-        """
-        Return the full serialisable state of the environment.
-
-        Includes true state (actual completions, candor levels) for debugging.
-        """
-        env = _get_env()
-        return env.state()
-
-    @mcp.tool()
-    def health() -> Dict[str, str]:
-        """Liveness check — always returns OK."""
-        return {"status": "ok", "service": "CrisisOps MCP Server"}
+    mcp.tool()(reset)
+    mcp.tool()(step)
+    mcp.tool()(state)
+    mcp.tool()(get_state)
+    mcp.tool()(health)
 
 else:
     mcp = None   # type: ignore[assignment]
