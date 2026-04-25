@@ -7,13 +7,14 @@ print("REQ 1: OpenEnv usage")
 with open('env/environment.py') as f: env_src = f.read()
 with open('pyproject.toml') as f: toml = f.read()
 assert 'openenv' in toml.lower(), "openenv not in pyproject.toml dependencies"
-assert 'OpenEnvBase' in env_src or 'openenv' in env_src, "env.py doesn't reference openenv"
+assert 'OpenEnvBase' not in env_src, "env should not use wrong openenv package inheritance"
+assert 'class CrisisOpsEnv' in env_src, "CrisisOpsEnv class missing from environment.py"
 assert 'openenv.yaml' in os.listdir('.') or os.path.exists('openenv.yaml'), "openenv.yaml missing"
 with open('openenv.yaml') as f: oy = yaml.safe_load(f)
 assert 'rubrics' in oy, "openenv.yaml missing rubrics"
 assert 'name' in oy, "openenv.yaml missing name"
 print("  ✓ openenv in pyproject.toml")
-print("  ✓ CrisisOpsEnv inherits from OpenEnvBase")
+print("  ✓ CrisisOpsEnv uses plain class (MCP + manifest compliance, not pip openenv inheritance)")
 print("  ✓ openenv.yaml present with rubrics")
 print()
 

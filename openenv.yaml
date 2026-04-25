@@ -107,11 +107,12 @@ novel_mechanisms:
       trigger_whistleblower. Creates dual-resource management problem.
   - name: llm_powered_adversarial_agent
     description: >
-      One team member per episode uses a live LLM (gpt-4o-mini) to generate
-      contextually adaptive lies. The adversary reads its true state, prior statements,
-      and PM query history to construct plausible, consistent deceptions. Falls back
-      to rule-based inflation when API unavailable. This is genuine multi-agent RL:
-      a trained PM vs a reasoning adversary.
+      One team member per episode uses a live LLM to generate contextually
+      adaptive lies. Uses Ollama (qwen2.5:3b, free, local) with automatic
+      fallback to OpenAI API or rule-based inflation. This is genuine multi-agent RL:
+      a trained PM agent vs a reasoning adversary with no API cost for local use.
+      The adversary reads its true state, prior statements, and PM query history
+      to construct plausible, consistent deceptions.
   - name: long_horizon_memory_buffer
     description: >
       Every 8 steps (5 at level 3-4), the environment compresses episode history

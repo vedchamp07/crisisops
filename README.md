@@ -29,7 +29,7 @@ An OpenEnv-compatible reinforcement learning environment for training a small LL
 
 ## 🏆 Hackathon Themes Covered
 
-- **Theme 1 (Multi-Agent)**: GRPO-trained PM agent vs LLM-powered (gpt-4o-mini) adversarial deceptive member
+- **Theme 1 (Multi-Agent)**: GRPO-trained PM agent vs LLM-powered (Ollama qwen2.5:3b, OpenAI fallback) adversarial deceptive member
 - **Theme 2 (Long-Horizon)**: Memory buffer compresses episode state every 8 steps; agent must track deception patterns across a 30-step horizon
 - **Theme 3.1 (Professional Tasks)**: Real Jira/Linear API integration, observable signal queries, counterfactual reward
 - **Theme 4 (Self-Improvement)**: Adaptive crisis generator (EMA weakness tracking) dynamically increases exposure to agent's blind spots
@@ -54,7 +54,7 @@ plots/reward_curve.png
 2. **Social testimony graph** — `query_peer_opinion` lets the PM triangulate through peer-to-peer intel
 3. **Alibi coordination** — deceptive allies give consistent coordinated alibis; agent must break the chain
 4. **Political capital** — second earned resource; spend to compel truth (`force_truth`) or tip off whistleblower
-5. **LLM-powered adversarial agent** — one member per episode uses gpt-4o-mini to generate contextual, adaptive lies
+5. **LLM-powered adversarial agent** — one member per episode uses Ollama (qwen2.5:3b) with OpenAI fallback, or rule-based inflation
 6. **Long-horizon memory buffer** — episode history compressed every 8 steps and injected into observation
 
 ## What it is
@@ -113,8 +113,8 @@ Run the notebook top-to-bottom. No setup required. Uses Unsloth + TRL GRPOTraine
 ## Quick start
 
 ```bash
-# Install (requires Python 3.11+)
-pip install -r requirements.txt
+# Install (requires Python 3.11+). For the full training stack, use:
+pip install -r requirements_train.txt
 
 # Run tests
 pytest tests/ -v

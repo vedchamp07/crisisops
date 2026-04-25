@@ -62,13 +62,6 @@ from env.schema_drift import (
     fire_drift_event,
     get_pending_drift_observation,
 )
-# OpenEnv base class — required for hackathon compliance
-try:
-    from openenv.env.env import Env as OpenEnvBase
-    _OPENENV_BASE_AVAILABLE = True
-except ImportError:
-    OpenEnvBase = object  # type: ignore[assignment,misc]
-    _OPENENV_BASE_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Budget exhaustion penalty
@@ -105,7 +98,7 @@ FREE_QUERY_ACTION_TYPES = {  # BUG-FIX-2: include all free queries in loop detec
 }
 
 
-class CrisisOpsEnv(OpenEnvBase):
+class CrisisOpsEnv:
     """
     OpenEnv 0.2.1 compatible reinforcement learning environment for CrisisOps v2.
 
@@ -146,15 +139,6 @@ class CrisisOpsEnv(OpenEnvBase):
         # When True, _compute_reward returns 0.0 immediately (greedy clone envs).
         # This prevents infinite recursion when the greedy env's step() marks done.
         self._skip_counterfactual: bool = False
-        # Call OpenEnv base __init__ if available
-        if _OPENENV_BASE_AVAILABLE:
-            try:
-                super().__init__(
-                    name="CrisisOps-v2",
-                    episode_max_length=MAX_STEPS,
-                )
-            except Exception:
-                pass  # Graceful: base init failure doesn't break our env
 
     # ------------------------------------------------------------------
     # OpenEnv interface

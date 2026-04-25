@@ -1,0 +1,31 @@
+# Full requirements for local training. For the HF Spaces demo, use root `requirements.txt`.
+# CrisisOps v2 requirements
+# Install order matters: torch before unsloth, unsloth before trl
+
+# Core ML stack
+torch>=2.1.0
+transformers>=4.40.0
+accelerate>=0.27.0
+peft>=0.10.0
+
+# Training
+trl>=0.29.0
+unsloth>=2024.3
+
+# Environment
+openai>=1.0.0  # OpenAI client; also used with Ollama OpenAI-compatible endpoint
+fastapi>=0.110.0
+uvicorn>=0.29.0
+pydantic>=2.6.0
+
+# MCP server
+mcp>=1.0.0
+
+# Jira/Linear adapter
+requests>=2.31.0
+
+# Testing
+pytest>=8.0.0
+
+# Utilities
+numpy>=1.26.0
