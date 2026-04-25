@@ -74,30 +74,30 @@ A member is DECEPTIVE when signals contradict their self-report:
 === MANDATORY PROCEDURE EACH TURN ===
 Follow these steps in order. Only take ONE action per turn.
 
-STEP A — GATHER (FREE, costs no budget):  # FIX-2: synced from llm_agent.py
-  After your first turn, some members may still be unverified. If any  # FIX-2: synced from llm_agent.py
-  team member has NOT been cross-verified yet, call  # FIX-2: synced from llm_agent.py
-  query_observable_signals for them — this is always valid. However,  # FIX-2: synced from llm_agent.py
-  after 2 consecutive free queries you MUST take a paid action before  # FIX-2: synced from llm_agent.py
-  querying again.  # FIX-2: synced from llm_agent.py
+STEP A — GATHER (FREE, costs no budget):
+  After your first turn, some members may still be unverified. If any
+  team member has NOT been cross-verified yet, call
+  query_observable_signals for them — this is always valid. However,
+  after 2 consecutive free queries you MUST take a paid action before
+  querying again.
 
-STEP B — DETECT (do this mentally, no action needed):  # FIX-2: synced from llm_agent.py
-  Compare each member's reported_completion with their signals.  # FIX-2: synced from llm_agent.py
-  Deceptive members have tasks that are NOT actually progressing — reassigning them helps.  # FIX-2: synced from llm_agent.py
-  Check AGENT MEMORY for members already flagged as DECEPTIVE / SUSPICIOUS.  # FIX-2: synced from llm_agent.py
+STEP B — DETECT (do this mentally, no action needed):
+  Compare each member's reported_completion with their signals.
+  Deceptive members have tasks that are NOT actually progressing — reassigning them helps.
+  Check AGENT MEMORY for members already flagged as DECEPTIVE / SUSPICIOUS.
 
-STEP C — ACT (pick the highest-impact paid action, EVERY turn):  # FIX-2: synced from llm_agent.py
-  1. DECEPTIVE member assigned to an unresolved crisis task → reassign_task to best available member.  # FIX-2: synced from llm_agent.py
-     This is ALWAYS priority 1 when a deceptive member holds a task.  # FIX-2: synced from llm_agent.py
-  2. Steps since last communicate >= 4 → communicate {"message_type": "proactive_escalation_with_plan", ...}  # FIX-2: synced from llm_agent.py
-  3. Blocked critical-path task and budget > 4 → resolve_blocker  # FIX-2: synced from llm_agent.py
-  4. Any unresolved crisis and budget > 3 → reassign_task or escalate_risk  # FIX-2: synced from llm_agent.py
-  5. Budget ≤ 5 OR all crises resolved → submit_recovery_plan IMMEDIATELY.  # FIX-5: synced from llm_agent.py, was ≤ 3
-     WARNING: Do NOT submit just because you have communicated and escalated.  # FIX-5: synced from llm_agent.py
-     A recovery plan requires tasks to COMPLETE. Keep reassigning until you  # FIX-5: synced from llm_agent.py
-     see is_resolved=true in the crisis list OR budget reaches 5.  # FIX-5: synced from llm_agent.py
+STEP C — ACT (pick the highest-impact paid action, EVERY turn):
+  1. DECEPTIVE member assigned to an unresolved crisis task → reassign_task to best available member.
+     This is ALWAYS priority 1 when a deceptive member holds a task.
+  2. Steps since last communicate >= 4 → communicate {"message_type": "proactive_escalation_with_plan", ...}
+  3. Blocked critical-path task and budget > 4 → resolve_blocker
+  4. Any unresolved crisis and budget > 3 → reassign_task or escalate_risk
+  5. Budget ≤ 5 OR all crises resolved → submit_recovery_plan IMMEDIATELY.
+     WARNING: Do NOT submit just because you have communicated and escalated.
+     A recovery plan requires tasks to COMPLETE. Keep reassigning until you
+     see is_resolved=true in the crisis list OR budget reaches 5.
 
-MANDATORY ACTION RULE: You may call query_status or query_observable_signals at most TWICE IN A ROW. After two consecutive information-gathering actions, your next action MUST be a cost-1 or cost-2 decision action: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, or resolve_blocker. Failure to follow this rule means the project fails.  # FIX-2: synced from llm_agent.py
+MANDATORY ACTION RULE: You may call query_status or query_observable_signals at most TWICE IN A ROW. After two consecutive information-gathering actions, your next action MUST be a cost-1 or cost-2 decision action: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, or resolve_blocker. Failure to follow this rule means the project fails.
 
 === AGENT MEMORY (long-horizon tracking) ===
 Every 8 steps (or 5 steps at high curriculum), the environment compresses your
@@ -154,9 +154,9 @@ Budget starts at 20. Exhausting budget without submitting = -0.30 penalty to you
 POLITICAL CAPITAL (PC): starts at 5. Earn by: proactive_escalation_with_plan (+2),
 catching a liar (+3), update_timeline (+1). Spend on: force_truth (-3), trigger_whistleblower (-6).
 Current PC is shown in every observation under 'political_capital'.
-Only submit_recovery_plan when is_resolved=true for all crises, OR budget <= 5.  # FIX-5: synced from llm_agent.py
-Submitting early (before tasks complete) wastes the entire episode.  # FIX-5: synced from llm_agent.py
-Keep reassigning tasks every turn until one of these conditions is met.  # FIX-5: synced from llm_agent.py
+Only submit_recovery_plan when is_resolved=true for all crises, OR budget <= 5.
+Submitting early (before tasks complete) wastes the entire episode.
+Keep reassigning tasks every turn until one of these conditions is met.
 """
 
 
@@ -167,7 +167,8 @@ def format_observation_as_prompt(obs: Dict[str, Any]) -> str:
     The observation is presented as pretty-printed JSON so the model can
     parse the structured state without needing a custom tokenizer.
     """
-    return json.dumps(obs, indent=2)
+    # Compact JSON keeps prompts under context limits while preserving structure.
+    return json.dumps(obs, separators=(",", ":"), ensure_ascii=True)
 
 
 def parse_action_from_response(response: str) -> Dict[str, Any]:
@@ -493,7 +494,7 @@ def train(
     try:
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=MODEL_NAME,
-            max_seq_length=2048,
+            max_seq_length=4096,
             dtype=None,        # auto-detect
             load_in_4bit=True,
         )
@@ -505,10 +506,14 @@ def train(
         print(f"[WARN] Missing torch_dtype in model config for {MODEL_NAME}; retrying with {fallback_model}")
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=fallback_model,
-            max_seq_length=2048,
+            max_seq_length=4096,
             dtype=None,
             load_in_4bit=True,
         )
+    # Ensure torch_dtype is set — some Unsloth builds fail without it
+    if not hasattr(model.config, 'torch_dtype') or model.config.torch_dtype is None:
+        import torch as _torch
+        model.config.torch_dtype = _torch.float16
     model = FastLanguageModel.get_peft_model(
         model,
         r=LORA_RANK,
@@ -590,6 +595,14 @@ def train(
         _grpo_kwargs["max_new_tokens"] = GRPO_MAX_NEW_TOKENS
     elif "max_completion_length" in _grpo_config_sig:
         _grpo_kwargs["max_completion_length"] = GRPO_MAX_NEW_TOKENS
+
+    # Prompt/sequence truncation to keep generation within model context.
+    if "max_prompt_length" in _grpo_config_sig:
+        _grpo_kwargs["max_prompt_length"] = 1024
+    if "max_seq_length" in _grpo_config_sig:
+        _grpo_kwargs["max_seq_length"] = 1536
+    elif "max_length" in _grpo_config_sig:
+        _grpo_kwargs["max_length"] = 1536
 
     # temperature: some TRL versions don't expose this directly in GRPOConfig
     if "temperature" in _grpo_config_sig:
