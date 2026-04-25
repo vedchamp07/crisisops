@@ -38,7 +38,7 @@ LORA_ALPHA   = 32
 LORA_TARGET_MODULES = ["q_proj", "v_proj"]
 LORA_DROPOUT = 0.0
 
-GRPO_BATCH_SIZE         = 4
+GRPO_BATCH_SIZE         = 2   # 6GB VRAM — 4 can OOM during backward pass
 GRPO_MINI_BATCH_SIZE    = 2
 GRPO_NUM_GENERATIONS    = 4    # G in GRPO: responses per prompt
 GRPO_MAX_NEW_TOKENS     = 256
@@ -252,7 +252,6 @@ def _make_reward_fn(scenario_fn_or_generator, curriculum_level: int, model, toke
         Each completion is treated as the first action response.  The episode
         then runs until done or MAX_EPISODE_STEPS.
         """
-        import torch
         from env.environment import CrisisOpsEnv, MAX_STEPS
         from env.crisis_generator import CrisisGenerator
 
@@ -301,50 +300,7 @@ def _make_reward_fn(scenario_fn_or_generator, curriculum_level: int, model, toke
                 step += 1
                 if done:
                     continue
-
-                # Generate one inner-turn action conditioned on updated state.
-                next_step = step + 1
-                try:
-                    user_content = format_observation_as_prompt(obs)
-                    inner_messages = [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_content},
-                    ]
-                    inner_text = tokenizer.apply_chat_template(
-                        inner_messages,
-                        tokenize=False,
-                        add_generation_prompt=True,
-                    )
-                    max_ctx = int(getattr(model.config, "max_position_embeddings", 2048))
-                    max_prompt_tokens = max(128, max_ctx - GRPO_MAX_NEW_TOKENS - 8)
-                    inputs = tokenizer(
-                        inner_text,
-                        return_tensors="pt",
-                        truncation=True,
-                        max_length=max_prompt_tokens,
-                    ).to(model.device)
-                    with torch.no_grad():
-                        out_ids = model.generate(
-                            **inputs,
-                            max_new_tokens=GRPO_MAX_NEW_TOKENS,
-                            temperature=0.1,
-                            do_sample=True,
-                            pad_token_id=tokenizer.eos_token_id,
-                        )
-                    inner_response = tokenizer.decode(
-                        out_ids[0][inputs["input_ids"].shape[1]:],
-                        skip_special_tokens=True,
-                    )
-                    parsed_action = parse_action_from_response(inner_response)
-                    # Replace any no-op query_status with the inner policy so the
-                    # episode always has purposeful actions — communication cadence
-                    # is maintained and client satisfaction never crashes.
-                    if parsed_action.get("action_type") == "query_status":
-                        action = _inner_agent_action(obs, next_step)
-                    else:
-                        action = parsed_action
-                except Exception:
-                    action = _inner_agent_action(obs, next_step)
+                action = _inner_agent_action(obs, step + 1)
 
             rewards.append(float(reward_val))
 
