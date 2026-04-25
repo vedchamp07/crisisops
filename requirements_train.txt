@@ -4,12 +4,12 @@
 
 # Core ML stack
 torch>=2.1.0
-transformers>=4.40.0
+transformers==4.56.2
 accelerate>=0.27.0
 peft>=0.10.0
 
 # Training
-trl>=0.29.0
+trl==0.19.1
 unsloth>=2024.3
 
 # Environment
@@ -29,3 +29,4 @@ pytest>=8.0.0
 
 # Utilities
 numpy>=1.26.0
+datasets>=3.2.0

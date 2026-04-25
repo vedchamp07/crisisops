@@ -314,7 +314,14 @@ def _make_reward_fn(scenario_fn_or_generator, curriculum_level: int, model, toke
                         tokenize=False,
                         add_generation_prompt=True,
                     )
-                    inputs = tokenizer(inner_text, return_tensors="pt").to(model.device)
+                    max_ctx = int(getattr(model.config, "max_position_embeddings", 2048))
+                    max_prompt_tokens = max(128, max_ctx - GRPO_MAX_NEW_TOKENS - 8)
+                    inputs = tokenizer(
+                        inner_text,
+                        return_tensors="pt",
+                        truncation=True,
+                        max_length=max_prompt_tokens,
+                    ).to(model.device)
                     with torch.no_grad():
                         out_ids = model.generate(
                             **inputs,
@@ -450,7 +457,7 @@ def train(
     except ImportError as e:
         raise ImportError(
             f"Training requires unsloth and trl: {e}\n"
-            "Install with: pip install unsloth trl>=0.29.0"
+            "Install with: pip install unsloth trl==0.19.1"
         ) from e
 
     from env.crisis_generator import CrisisGenerator
@@ -460,13 +467,48 @@ def train(
     generator = CrisisGenerator(curriculum_level=curriculum_level)
     curriculum = CurriculumManager(starting_level=curriculum_level)
 
+    # Compatibility patch: older Unsloth loaders expect torch_dtype in config.to_dict().
+    try:
+        from transformers.configuration_utils import PretrainedConfig as _HFPretrainedConfig
+
+        if not getattr(_HFPretrainedConfig, "_crisisops_torch_dtype_patch", False):
+            _orig_to_dict = _HFPretrainedConfig.to_dict
+
+            def _patched_to_dict(self):
+                data = _orig_to_dict(self)
+                if "torch_dtype" not in data:
+                    torch_dtype = getattr(self, "torch_dtype", None)
+                    if torch_dtype is None:
+                        data["torch_dtype"] = "bfloat16"
+                    else:
+                        data["torch_dtype"] = str(torch_dtype).replace("torch.", "")
+                return data
+
+            _HFPretrainedConfig.to_dict = _patched_to_dict  # type: ignore[assignment]
+            _HFPretrainedConfig._crisisops_torch_dtype_patch = True  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
     # --- Load model with Unsloth LoRA ---
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=MODEL_NAME,
-        max_seq_length=2048,
-        dtype=None,        # auto-detect
-        load_in_4bit=True,
-    )
+    try:
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=MODEL_NAME,
+            max_seq_length=2048,
+            dtype=None,        # auto-detect
+            load_in_4bit=True,
+        )
+    except KeyError as e:
+        # Some upstream model configs omit torch_dtype and trigger Unsloth loader errors.
+        if "torch_dtype" not in str(e):
+            raise
+        fallback_model = "unsloth/Qwen2.5-1.5B-Instruct-bnb-4bit"
+        print(f"[WARN] Missing torch_dtype in model config for {MODEL_NAME}; retrying with {fallback_model}")
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=fallback_model,
+            max_seq_length=2048,
+            dtype=None,
+            load_in_4bit=True,
+        )
     model = FastLanguageModel.get_peft_model(
         model,
         r=LORA_RANK,
@@ -477,6 +519,33 @@ def train(
         use_gradient_checkpointing="unsloth",
         random_state=seed,
     )
+    # Stability patch: avoid Unsloth's cached generation path, which can fail
+    # on some stacks when past_key_values contains None entries.
+    try:
+        model.config.use_cache = False
+        if hasattr(model, "generation_config") and model.generation_config is not None:
+            model.generation_config.use_cache = False
+            if hasattr(model.generation_config, "cache_implementation"):
+                model.generation_config.cache_implementation = None
+
+        _orig_generate = model.generate
+
+        def _safe_generate(*args, **kwargs):
+            kwargs["use_cache"] = False
+            gen_cfg = kwargs.get("generation_config")
+            if gen_cfg is not None:
+                try:
+                    gen_cfg.use_cache = False
+                    if hasattr(gen_cfg, "cache_implementation"):
+                        gen_cfg.cache_implementation = None
+                except Exception:
+                    pass
+            kwargs.pop("cache_implementation", None)
+            return _orig_generate(*args, **kwargs)
+
+        model.generate = _safe_generate
+    except Exception:
+        pass
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -485,25 +554,54 @@ def train(
 
     # Pass the generator itself so each sample gets a distinct scenario_fn,
     # giving the training set full crisis-type coverage.
-    full_dataset = build_training_dataset(
+    full_dataset_list = build_training_dataset(
         scenario_fn_or_generator=generator,
         curriculum_level=current_level,
         n_samples=num_episodes,
         seed=seed,
     )
+    # Convert to HF Dataset so GRPOTrainer forwards episode_seed as kwargs column
+    try:
+        from datasets import Dataset as HFDataset
+        full_dataset = HFDataset.from_list(full_dataset_list)
+    except ImportError:
+        # Fallback: plain list still works, episode_seed just won't be forwarded
+        full_dataset = full_dataset_list
+        print("[WARN] datasets package not installed — episode_seed not forwarded to reward_fn")
 
-    config = GRPOConfig(
-        output_dir=output_dir,
-        num_train_epochs=1,
-        per_device_train_batch_size=GRPO_BATCH_SIZE,
-        num_generations=GRPO_NUM_GENERATIONS,
-        max_new_tokens=GRPO_MAX_NEW_TOKENS,
-        temperature=GRPO_TEMPERATURE,
-        learning_rate=GRPO_LEARNING_RATE,
-        logging_steps=GRPO_LOGGING_STEPS,
-        save_steps=50,
-        seed=seed,
-    )
+    # Build GRPOConfig — handle parameter name differences across TRL versions
+    import inspect as _inspect
+    _grpo_config_sig = set(_inspect.signature(GRPOConfig.__init__).parameters.keys())
+
+    _grpo_kwargs: Dict[str, Any] = {
+        "output_dir": output_dir,
+        "num_train_epochs": 1,
+        "per_device_train_batch_size": GRPO_BATCH_SIZE,
+        "num_generations": GRPO_NUM_GENERATIONS,
+        "learning_rate": GRPO_LEARNING_RATE,
+        "logging_steps": GRPO_LOGGING_STEPS,
+        "save_steps": 50,
+        "seed": seed,
+        "report_to": "none",  # disable wandb/tensorboard by default
+    }
+
+    # max_new_tokens: some TRL versions use max_completion_length instead
+    if "max_new_tokens" in _grpo_config_sig:
+        _grpo_kwargs["max_new_tokens"] = GRPO_MAX_NEW_TOKENS
+    elif "max_completion_length" in _grpo_config_sig:
+        _grpo_kwargs["max_completion_length"] = GRPO_MAX_NEW_TOKENS
+
+    # temperature: some TRL versions don't expose this directly in GRPOConfig
+    if "temperature" in _grpo_config_sig:
+        _grpo_kwargs["temperature"] = GRPO_TEMPERATURE
+
+    # mini_batch_size: named differently in some versions
+    if "per_device_mini_train_batch_size" in _grpo_config_sig:
+        _grpo_kwargs["per_device_mini_train_batch_size"] = GRPO_MINI_BATCH_SIZE
+    elif "mini_batch_size" in _grpo_config_sig:
+        _grpo_kwargs["mini_batch_size"] = GRPO_MINI_BATCH_SIZE
+
+    config = GRPOConfig(**_grpo_kwargs)
 
     # The reward_fn must also vary scenarios per completion; pass the generator
     # so it can sample fresh scenario_fns inside each rollout.
