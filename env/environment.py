@@ -175,6 +175,7 @@ class CrisisOpsEnv:
         state.total_member_query_calls = 0
         # FIX: 1 Reset free-query loop counter at episode start.
         state.consecutive_free_query_count = 0
+        state.political_capital = 5.0  # reset political capital each episode
         state.active_drift_events = []
         state.pending_drift_event = None
         state.drift_fire_step = None
@@ -184,6 +185,9 @@ class CrisisOpsEnv:
         for member in state.team_members:
             initialise_member_candor(member, self._rng)
             member.ticket_last_changed_step = 0
+            member.times_cross_verified = 0
+            member.last_cross_verified_step = -10
+            member.caught_this_episode = False
 
         # Schema drift (Level 2+)
         if self._curriculum_level >= 2:
@@ -344,6 +348,7 @@ class CrisisOpsEnv:
         return {
             "current_step": s.current_step,
             "budget_remaining": s.budget_remaining,
+            "political_capital": round(s.political_capital, 2),
             "done": s.done,
             "terminated_by_budget": s.terminated_by_budget,
             "curriculum_level": s.curriculum_level,
@@ -361,6 +366,9 @@ class CrisisOpsEnv:
                     "reported_availability": m.reported_availability,
                     "actual_velocity": m.actual_velocity,
                     "morale": m.morale,
+                    "alliance_id": m.alliance_id,
+                    "times_cross_verified": m.times_cross_verified,
+                    "caught_this_episode": m.caught_this_episode,
                     "assigned_task_ids": m.assigned_task_ids,
                 }
                 for m in s.team_members
@@ -448,6 +456,7 @@ class CrisisOpsEnv:
         return {
             "current_step": s.current_step,
             "budget_remaining": s.budget_remaining,
+            "political_capital": round(s.political_capital, 2),
             "team_members": members_obs,
             "crises": crises_obs,
             "stakeholder": get_stakeholder_observation(s),
@@ -488,6 +497,13 @@ class CrisisOpsEnv:
                project_score(greedy_PM_final_state)"
                "Both agent and greedy PM start from identical initial state."
         """
+        # Apply ignored effect: self-preservation members never checked grow bolder.
+        # This fires at episode end and is logged for curriculum analysis.
+        if not self._skip_counterfactual:
+            from env.candor import apply_ignored_effect
+            for member in agent_state.team_members:
+                apply_ignored_effect(member)
+
         # Guard against recursive calls from greedy clone environments.
         # When this env is itself a clone (skip_counterfactual=True), return 0.
         if self._skip_counterfactual:

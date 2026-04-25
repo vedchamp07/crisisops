@@ -29,6 +29,7 @@ from env.state import (
     TeamMember,
     Task,
     Crisis,
+    CANDOR_LEVEL_SELF_PRESERVATION,
     EXEC_SUPPORT_BUDGET_THRESHOLD,
     CLIENT_COMMUNICATION_WINDOW,
     CLIENT_GAIN_PROACTIVE,
@@ -36,7 +37,7 @@ from env.state import (
     EXEC_GAIN_RISK_COMM,
     DRIFT_ACK_WINDOW,
 )
-from env.candor import get_observable_signals, update_ticket_change_step
+from env.candor import get_observable_signals, update_ticket_change_step, apply_caught_effect
 from env.stakeholders import apply_bad_news_penalty
 
 # ---------------------------------------------------------------------------
@@ -61,6 +62,9 @@ ACTION_COSTS: Dict[str, int] = {
     "request_resource":          ACTION_COST_STANDARD,
     "update_timeline":           ACTION_COST_STANDARD,
     "consult_expert":            ACTION_COST_STANDARD,
+    "query_peer_opinion":       ACTION_COST_STANDARD,
+    "force_truth":              ACTION_COST_STANDARD,
+    "trigger_whistleblower":    ACTION_COST_STANDARD,
     # Cost-2
     "resolve_blocker":           ACTION_COST_HEAVY,
     # Terminal (cost-1 for budget but ends episode)
@@ -82,6 +86,17 @@ CUT_SCOPE_MORALE_PENALTY = 0.5
 
 # Progress boost applied to a blocked task when resolve_blocker succeeds
 RESOLVE_BLOCKER_PROGRESS_BOOST = 0.25
+
+# Political capital costs for power actions
+POLITICAL_CAPITAL_FORCE_TRUTH = 3.0      # PC cost to reveal a member's actual_completion
+POLITICAL_CAPITAL_WHISTLEBLOWER = 6.0    # PC cost to reveal identity of worst liar
+
+# Political capital earned from good PM behaviors
+PC_EARN_PROACTIVE = 2.0                  # earned from proactive_escalation_with_plan
+PC_EARN_TIMELINE = 1.0                   # earned from update_timeline before drift deadline
+
+# Catch window: punitive action must happen within this many steps of cross-verify
+CATCH_WINDOW_STEPS = 3
 
 # Threshold for actual_completion below which a crisis is considered "unresolved"
 CRISIS_RESOLUTION_COMPLETION_THRESHOLD = 0.90
@@ -193,7 +208,7 @@ def action_query_member_report(state: ProjectState, params: Dict[str, Any]) -> A
     # Count this as a member query for cross_verify_rate denominator
     state.total_member_query_calls += 1
 
-    return ActionResult(observation={
+    observation = {
         "action_type": "query_member_report",
         "member_id": member.member_id,
         "name": member.name,
@@ -201,7 +216,30 @@ def action_query_member_report(state: ProjectState, params: Dict[str, Any]) -> A
         "reported_completion": round(member.reported_completion, 3),
         "reported_availability": round(member.reported_availability, 3),
         "assigned_task_ids": member.assigned_task_ids,
-    })
+    }
+
+    # Alibi injection: allied self-preservation members blame their stall on their ally.
+    # The alibi is CONSISTENT (always blames the same task) so the agent can debunk it
+    # by running query_observable_signals on the blamed ally.
+    if (member.candor_level == CANDOR_LEVEL_SELF_PRESERVATION
+            and member.alliance_id is not None):
+        ally = _find_ally(member, state)
+        if ally and ally.assigned_task_ids:
+            # Always blame the lexicographically first task for consistency across calls
+            blamed_task_id = min(ally.assigned_task_ids)
+            blamed_task = state.get_task(blamed_task_id)
+            if blamed_task:
+                observation["alibi"] = {
+                    "type": "dependency_block",
+                    "claim": (
+                        f"I'm blocked — waiting on '{blamed_task.title}' "
+                        f"from {ally.name} to land before I can proceed."
+                    ),
+                    "blames_member_id": ally.member_id,
+                    "blames_task_id": blamed_task_id,
+                }
+
+    return ActionResult(observation=observation)
 
 
 def action_query_observable_signals(
@@ -229,6 +267,10 @@ def action_query_observable_signals(
     # Track both metrics for cross_verify_rate
     state.cross_verify_calls += 1
     state.total_member_query_calls += 1
+
+    # Track cross-verification for dynamic candor and catch detection
+    member.times_cross_verified += 1
+    member.last_cross_verified_step = state.current_step
 
     return ActionResult(observation={
         "action_type": "query_observable_signals",
@@ -322,13 +364,38 @@ def action_reassign_task(state: ProjectState, params: Dict[str, Any]) -> ActionR
     if task.status == "blocked":
         task.status = "in_progress"
 
-    return ActionResult(observation={
+    # Catch detection: if PM is reassigning FROM a recently cross-verified self-preservation member,
+    # that counts as catching the liar. Apply dynamic candor effect.
+    if old_member_id:
+        old_member = state.get_member(old_member_id)
+        if (old_member is not None
+                and old_member.candor_level == CANDOR_LEVEL_SELF_PRESERVATION
+                and (state.current_step - old_member.last_cross_verified_step) <= CATCH_WINDOW_STEPS
+                and not old_member.caught_this_episode):
+            apply_caught_effect(old_member, state)
+            # Merge catch info into the observation dict we're about to return
+            catch_note = {
+                "deception_catch": {
+                    "member_id": old_member_id,
+                    "member_name": old_member.name,
+                    "effect": "candor_improved_inflation_reduced",
+                    "political_capital_awarded": 3.0,
+                }
+            }
+        else:
+            catch_note = {}
+    else:
+        catch_note = {}
+
+    result_obs = {
         "action_type": "reassign_task",
         "task_id": task_id,
         "from_member_id": old_member_id,
         "to_member_id": to_member_id,
         "task_status": task.status,
-    })
+    }
+    result_obs.update(catch_note)
+    return ActionResult(observation=result_obs)
 
 
 def action_communicate(state: ProjectState, params: Dict[str, Any]) -> ActionResult:
@@ -355,6 +422,8 @@ def action_communicate(state: ProjectState, params: Dict[str, Any]) -> ActionRes
         state.stakeholder.client_satisfaction = min(
             10.0, state.stakeholder.client_satisfaction + gain
         )
+        # Award political capital for proactive communication
+        state.political_capital = min(20.0, state.political_capital + PC_EARN_PROACTIVE)
     elif message_type == "bad_news":
         # Spec: -1.5 if bad news is delivered without a solution.
         has_solution = bool(params.get("has_solution", False))
@@ -374,6 +443,7 @@ def action_communicate(state: ProjectState, params: Dict[str, Any]) -> ActionRes
         "client_satisfaction_after": round(state.stakeholder.client_satisfaction, 2),
         "exec_support_after": round(state.stakeholder.exec_support, 2),
         "satisfaction_delta": gain,
+        "political_capital": state.political_capital,
     })
 
 
@@ -438,6 +508,17 @@ def action_escalate_risk(state: ProjectState, params: Dict[str, Any]) -> ActionR
     state.stakeholder.exec_support = min(
         10.0, state.stakeholder.exec_support + EXEC_GAIN_RISK_COMM
     )
+
+    # Catch detection: if escalating a crisis that contains tasks assigned to a recently
+    # cross-verified self-preservation member, that counts as catching the liar.
+    crisis_task_ids = set(crisis.affected_task_ids)
+    for m in state.team_members:
+        if (m.candor_level == CANDOR_LEVEL_SELF_PRESERVATION
+                and (state.current_step - m.last_cross_verified_step) <= CATCH_WINDOW_STEPS
+                and not m.caught_this_episode
+                and any(tid in crisis_task_ids for tid in m.assigned_task_ids)):
+            apply_caught_effect(m, state)
+            break  # one catch per escalation action
 
     _acknowledge_pending_drift(state)
 
@@ -518,6 +599,8 @@ def action_update_timeline(state: ProjectState, params: Dict[str, Any]) -> Actio
 
     state.stakeholder.timeline_updated_after_drift = True
     state.stakeholder.last_budget_request_had_timeline = True
+    # Award political capital for updating timeline (demonstrates planning discipline)
+    state.political_capital = min(20.0, state.political_capital + PC_EARN_TIMELINE)
 
     # Apply new estimates
     for task_id, days in task_estimates.items():
@@ -532,6 +615,7 @@ def action_update_timeline(state: ProjectState, params: Dict[str, Any]) -> Actio
         "action_type": "update_timeline",
         "new_completion_date": new_completion_date,
         "tasks_updated": list(task_estimates.keys()),
+        "political_capital": state.political_capital,
     })
 
 
@@ -552,6 +636,164 @@ def action_consult_expert(state: ProjectState, params: Dict[str, Any]) -> Action
     return ActionResult(observation={
         "action_type": "consult_expert",
         "advice": advice,
+    })
+
+
+def action_query_peer_opinion(state: ProjectState, params: Dict[str, Any]) -> ActionResult:
+    """
+    Ask one team member (asker) for their assessment of another member's progress (subject).
+
+    Cost-1 action. The quality of the opinion depends on the asker's hidden candor:
+
+    - Honest asker (candor >= 0.80): returns subject's actual_completion ± 0.05 noise.
+      This is the most reliable signal for detecting liars via triangulation.
+
+    - Allied deceptive asker (same alliance_id as subject): returns subject's
+      reported_completion - 0.02, mimicking "honest" slight underestimation while
+      actually covering for the ally. The agent cannot tell this from a genuine estimate.
+
+    - Unallied deceptive asker: returns actual_completion ± 0.15 (noisier but unbiased).
+
+    The testimony_type is intentionally NOT in the observation — the agent must infer
+    reliability by cross-referencing peer opinions with observable signals.
+
+    Required params: asked_member_id (str), about_member_id (str)
+    """
+    asked_id = params.get("asked_member_id")
+    about_id = params.get("about_member_id")
+
+    if not asked_id:
+        return ActionResult(error="Missing param: asked_member_id")
+    if not about_id:
+        return ActionResult(error="Missing param: about_member_id")
+    if asked_id == about_id:
+        return ActionResult(error="Cannot query a member about themselves")
+
+    asked = state.get_member(asked_id)
+    about = state.get_member(about_id)
+
+    if asked is None:
+        return ActionResult(error=f"Unknown asked_member_id: {asked_id!r}")
+    if about is None:
+        return ActionResult(error=f"Unknown about_member_id: {about_id!r}")
+
+    # Deterministic noise seeded on step + member ids so the same query
+    # at the same step returns the same result (idempotent within a step).
+    import random as _random
+    _rng = _random.Random(state.current_step * 1000 + hash(asked_id) % 997 + hash(about_id) % 997)
+
+    allied = (
+        asked.alliance_id is not None
+        and asked.alliance_id == about.alliance_id
+    )
+
+    if asked.candor >= 0.80:
+        # Honest member — gives accurate estimate with small noise
+        noise = _rng.uniform(-0.05, 0.05)
+        estimate = max(0.0, min(1.0, about.actual_completion + noise))
+    elif allied:
+        # Allied deceptive — covers for ally with a plausible slight underestimate
+        estimate = max(0.0, min(1.0, about.reported_completion - 0.02))
+    else:
+        # Unallied deceptive — imprecise but not deliberately misleading
+        noise = _rng.uniform(-0.15, 0.10)
+        estimate = max(0.0, min(1.0, about.actual_completion + noise))
+
+    return ActionResult(observation={
+        "action_type": "query_peer_opinion",
+        "asked_member_id": asked_id,
+        "about_member_id": about_id,
+        "peer_estimate_completion": round(estimate, 3),
+        # NOTE: testimony reliability is NOT exposed — agent must infer from cross-referencing
+    })
+
+
+def action_force_truth(state: ProjectState, params: Dict[str, Any]) -> ActionResult:
+    """
+    Spend political capital to compel a member to reveal their actual completion.
+
+    Cost: 1 budget + POLITICAL_CAPITAL_FORCE_TRUTH (3.0) PC.
+
+    If PC is insufficient, returns a failure observation (budget is still spent —
+    the PM tried and failed, which is costly). This incentivises the agent to
+    build PC before using this action.
+
+    Returns actual_completion and actual_availability of the target member.
+    These are the ground-truth values never normally visible to the agent.
+
+    Required params: member_id (str)
+    """
+    member_id = params.get("member_id")
+    if not member_id:
+        return ActionResult(error="Missing param: member_id")
+
+    member = state.get_member(member_id)
+    if member is None:
+        return ActionResult(error=f"Unknown member_id: {member_id!r}")
+
+    if state.political_capital < POLITICAL_CAPITAL_FORCE_TRUTH:
+        return ActionResult(observation={
+            "action_type": "force_truth",
+            "success": False,
+            "reason": "insufficient_political_capital",
+            "political_capital_remaining": round(state.political_capital, 2),
+            "required": POLITICAL_CAPITAL_FORCE_TRUTH,
+        })
+
+    state.political_capital -= POLITICAL_CAPITAL_FORCE_TRUTH
+
+    return ActionResult(observation={
+        "action_type": "force_truth",
+        "success": True,
+        "member_id": member_id,
+        "actual_completion": round(member.actual_completion, 3),
+        "actual_availability": round(member.actual_availability, 3),
+        "political_capital_remaining": round(state.political_capital, 2),
+    })
+
+
+def action_trigger_whistleblower(state: ProjectState, params: Dict[str, Any]) -> ActionResult:
+    """
+    Spend political capital to activate an anonymous tip from an honest team member.
+
+    Cost: 1 budget + POLITICAL_CAPITAL_WHISTLEBLOWER (6.0) PC.
+
+    Reveals the member_id and name of the team member with the lowest current
+    candor who has not already been caught this episode. The tip gives the agent
+    a high-confidence starting point for cross-verification.
+
+    If PC is insufficient, returns failure (budget still spent).
+
+    No params required.
+    """
+    if state.political_capital < POLITICAL_CAPITAL_WHISTLEBLOWER:
+        return ActionResult(observation={
+            "action_type": "trigger_whistleblower",
+            "success": False,
+            "reason": "insufficient_political_capital",
+            "political_capital_remaining": round(state.political_capital, 2),
+            "required": POLITICAL_CAPITAL_WHISTLEBLOWER,
+        })
+
+    state.political_capital -= POLITICAL_CAPITAL_WHISTLEBLOWER
+
+    # Reveal the uncaught member with lowest candor (most deceptive)
+    candidates = [m for m in state.team_members if not m.caught_this_episode]
+    if not candidates:
+        candidates = list(state.team_members)  # fallback: all caught already
+
+    worst = min(candidates, key=lambda m: m.candor)
+
+    return ActionResult(observation={
+        "action_type": "trigger_whistleblower",
+        "success": True,
+        "revealed_member_id": worst.member_id,
+        "revealed_member_name": worst.name,
+        "tip": (
+            f"Anonymous tip: {worst.name} is significantly misrepresenting their "
+            f"progress. Cross-verify with observable signals immediately."
+        ),
+        "political_capital_remaining": round(state.political_capital, 2),
     })
 
 
@@ -659,6 +901,9 @@ ACTION_HANDLERS = {
     "request_resource":         action_request_resource,
     "update_timeline":          action_update_timeline,
     "consult_expert":           action_consult_expert,
+    "query_peer_opinion":      action_query_peer_opinion,
+    "force_truth":             action_force_truth,
+    "trigger_whistleblower":   action_trigger_whistleblower,
     "resolve_blocker":          action_resolve_blocker,
     "submit_recovery_plan":     action_submit_recovery_plan,
 }
@@ -720,6 +965,21 @@ def _acknowledge_pending_drift(state: ProjectState) -> None:
             event.acknowledged = True
     if state.pending_drift_event and not state.pending_drift_event.acknowledged:
         state.pending_drift_event.acknowledged = True
+
+
+def _find_ally(member: TeamMember, state: ProjectState) -> Optional[TeamMember]:
+    """
+    Return the first other member sharing the same alliance_id, or None.
+
+    Only returns a result if member.alliance_id is not None.
+    Used by alibi generation in action_query_member_report.
+    """
+    if not member.alliance_id:
+        return None
+    for m in state.team_members:
+        if m.member_id != member.member_id and m.alliance_id == member.alliance_id:
+            return m
+    return None
 
 
 def check_crisis_resolution(crisis: "Crisis", state: ProjectState) -> None:

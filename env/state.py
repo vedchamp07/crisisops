@@ -107,6 +107,12 @@ class TeamMember:
     # peer_mentions is computed dynamically from task dependency chains; stored here as cache
     peer_mention_count: int = 0
 
+    # --- Deception social graph ---
+    alliance_id: Optional[str] = None          # members sharing this id form an alibi alliance
+    times_cross_verified: int = 0              # how many times PM ran query_observable_signals on this member
+    last_cross_verified_step: int = -10        # step index of most recent cross-verification
+    caught_this_episode: bool = False          # True once PM catches this member lying
+
     # --- Morale contribution (spec uses team_morale_avg) ---
     morale: float = 7.0               # individual morale 0.0–10.0
 
@@ -266,6 +272,9 @@ class ProjectState:
     total_member_query_calls: int = 0    # query_member_report + query_observable_signals
     # FIX: 1 Track repeated free-query actions to break query-only loops.
     consecutive_free_query_count: int = 0
+
+    # --- Political capital (second earned resource) ---
+    political_capital: float = 5.0            # starts at 5, range 0–20
 
     # History
     actions_used: List[str] = field(default_factory=list)

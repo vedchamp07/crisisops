@@ -1,0 +1,103 @@
+name: crisisops-v2
+version: 2.0.0
+description: >
+  RL environment for training LLM agents to recover failing software projects
+  while detecting and managing adversarially deceptive team members.
+  Trains the skill of social triangulation under information warfare.
+
+theme: "3.1"
+theme_name: "Professional Tasks — World Modeling"
+
+interface:
+  reset: true
+  step: true
+  state: true
+
+observation_space:
+  type: dict
+  partial_observability: true
+  adversarial_info: true
+
+action_space:
+  type: discrete
+  n_actions: 16
+
+rubrics:
+  - name: crisis_recovery_rate
+    description: >
+      Fraction of active crises resolved by episode end.
+      Computed from actual state, not reported state.
+    weight: 0.50
+    range: [0.0, 1.0]
+    formula: "resolved_crises / total_crises"
+
+  - name: client_satisfaction
+    description: >
+      Normalized client satisfaction score at episode end (actual, not reported).
+      Decays if PM fails to communicate proactively.
+    weight: 0.30
+    range: [0.0, 1.0]
+    formula: "stakeholder.client_satisfaction / 10.0"
+
+  - name: team_morale
+    description: >
+      Average team morale across all members, normalized to [0,1].
+      Affected by reassignments, scope cuts, and passive decay.
+    weight: 0.20
+    range: [0.0, 1.0]
+    formula: "mean(member.morale for member in team) / 10.0"
+
+reward:
+  type: counterfactual
+  formula: "project_score(agent_final_state) - project_score(greedy_PM_final_state)"
+  baseline: greedy_pm
+  range: [-1.0, 1.0]
+  positive_means: "agent outperformed greedy PM on same initial scenario"
+
+curriculum:
+  levels: 4
+  unlock_thresholds:
+    level_2: 0.15
+    level_3: 0.25
+    level_4: 0.35
+  window_episodes: 10
+
+features:
+  partial_observability: true
+  adversarial_npcs: true
+  dynamic_candor_evolution: true
+  alibi_coordination: true
+  social_testimony_graph: true
+  political_capital_resource: true
+  schema_drift: true
+  curriculum_learning: true
+  counterfactual_reward: true
+
+training:
+  framework: trl_grpo
+  model: Qwen/Qwen2.5-1.5B-Instruct
+  requires_gpu: true
+  min_episodes: 200
+  recommended_episodes: 500
+
+novel_mechanisms:
+  - name: dynamic_candor_evolution
+    description: >
+      Team member deception intensity changes within episode based on PM behavior.
+      Caught liars become more honest. Unchecked liars grow bolder.
+      Forces individual-level inference rather than fixed-discount heuristics.
+  - name: social_testimony_graph
+    description: >
+      query_peer_opinion action lets PM ask one member about another.
+      Honest members give accurate estimates. Allied deceptive members cover for
+      allies. Creates social network reasoning as a trainable skill.
+  - name: alibi_coordination
+    description: >
+      Deceptive members with matching alliance_id provide coordinated alibis,
+      blaming stalls on each other. Agent must verify the alibi chain using
+      observable signals on the accused member.
+  - name: political_capital
+    description: >
+      Second earned resource (alongside budget). Earned through proactive
+      communication and catching liars. Spent on force_truth and
+      trigger_whistleblower. Creates dual-resource management problem.
