@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import sys
 import time
 from collections import Counter
@@ -49,6 +50,26 @@ from typing import Any, Dict, List, Optional, Tuple
 # ---------------------------------------------------------------------------
 # Provider detection and configuration
 # ---------------------------------------------------------------------------
+
+def _load_repo_dotenv() -> None:
+    """Load repo-root ``.env`` into ``os.environ`` without overriding existing vars."""
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    path = os.path.join(repo_root, ".env")
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key, val = key.strip(), val.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = val
+    except OSError:
+        return
+
 
 _PROVIDERS: List[Dict[str, str]] = [
     # order matters — first match wins
@@ -1089,13 +1110,14 @@ def run_eval(
     verbose: bool = False,
     temperature: float = 0.3,
 ) -> None:
-    """Run LLM agent on Level 1 episodes and compare with greedy/oracle."""
+    """Run LLM agent on CrisisOps episodes and compare with greedy baseline."""
+    _load_repo_dotenv()
+
     from env.environment import CrisisOpsEnv, MAX_STEPS
+    from env.crisis_generator import CrisisGenerator
     from reward.baseline import GreedyPMBaseline
-    from reward.counterfactual import project_score, counterfactual_reward
+    from reward.counterfactual import project_score
     from reward.metrics import compute_all_metrics
-    from calibration.calibrate import OracleAgent
-    from scenarios.level1 import get_random_level1_scenario
 
     base_url, api_key, default_model = _detect_provider()
     model = model or default_model
@@ -1125,6 +1147,7 @@ def run_eval(
     print("=" * 70)
 
     agent = LLMAgent(base_url, api_key, model, temperature, verbose)
+    generator = CrisisGenerator(curriculum_level=curriculum_level)
 
     llm_scores: List[float] = []
     greedy_scores: List[float] = []
@@ -1134,7 +1157,7 @@ def run_eval(
 
     for i in range(n_episodes):
         seed = seed_base + i
-        scenario_fn = get_random_level1_scenario()
+        scenario_fn = generator.get_scenario_fn(rng=random.Random(seed))
 
         # --- LLM Agent ---
         llm_env = CrisisOpsEnv(scenario_fn=scenario_fn, curriculum_level=curriculum_level)

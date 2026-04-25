@@ -503,11 +503,14 @@ LEVEL1_SCENARIOS = [
 
 def get_random_level1_scenario() -> Callable[[random.Random], ProjectState]:
     """
-    Return a randomly chosen Level 1 scenario factory.
+    Return a scenario factory that picks a Level-1 template per episode from ``rng``.
 
-    The CrisisGenerator calls this to sample episodes.  The factory itself
-    is parametric — each call with a fresh rng produces varied parameters.
+    The episode ``rng`` comes from ``env.reset(seed=…)``, so runs are reproducible
+    and different seeds rotate across the ``LEVEL1_SCENARIOS`` pool.
     """
-    import random as _random
-    idx = _random.randint(0, len(LEVEL1_SCENARIOS) - 1)
-    return LEVEL1_SCENARIOS[idx]
+
+    def factory(rng: random.Random) -> ProjectState:
+        fn = rng.choice(LEVEL1_SCENARIOS)
+        return fn(rng)
+
+    return factory

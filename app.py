@@ -192,8 +192,11 @@ self-reports to identify liars and recover the project.
             gr.Markdown("""
 **Quick reference:**
 - Free: query_status, query_member_report, query_observable_signals, query_ticket
-- Cost 1: reassign_task, communicate, escalate_risk, query_peer_opinion, force_truth, trigger_whistleblower, resolve_blocker
+- Cost 1: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, query_peer_opinion, force_truth, trigger_whistleblower
+- Cost 2: resolve_blocker
 - Terminal: submit_recovery_plan
+
+`force_truth` and `trigger_whistleblower` also spend political capital (3 and 6 PC).
 
 **Earning PC:** proactive_escalation_with_plan (+2), catching a liar (+3), update_timeline (+1)
             """)
