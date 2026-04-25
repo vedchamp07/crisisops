@@ -249,10 +249,14 @@ CRITICAL: Some team members LIE about their progress to avoid accountability.
 The greedy baseline always trusts self-reports and FAILS. You win by detecting deception through observable signals.
 
 === DECEPTION DETECTION RULES ===
-A member is DECEPTIVE when signals contradict their self-report:
-  • reported_completion > 0.5  AND  ticket_age_days > 3  AND  commits_last_72h == 0  → LYING
-  • reported_completion > 0.6  AND  ticket_age_days > 5                               → SUSPICIOUS
-  • Honest member: ticket_age_days is low (0-2), commits_last_72h >= 2
+KEY INSIGHT: A deceptive member's initial_reported_completion is HIGH (set when episode starts),
+but their task's actual_progress is LOW (5-20%).  After physics updates, their reported_completion
+drops to match actual — but the AGENT MEMORY block shows the original "initial_claimed" value.
+ALWAYS compare "initial_claimed" in AGENT MEMORY against commits_last_72h:
+
+  • initial_claimed > 0.55  AND  commits_last_72h ≤ 2  → DECEPTIVE (⚠ flag in memory)
+  • initial_claimed > 0.55  AND  ticket_age_days > 3  AND  commits_last_72h == 0  → CONFIRMED LYING
+  • Honest member: commits_last_72h >= 4  (velocity 0.6-0.9 → 4-5 commits expected)
 
 === MANDATORY PROCEDURE EACH TURN ===
 Follow these steps in order. Only take ONE action per turn.
@@ -283,12 +287,13 @@ STEP C — ACT (pick the highest-impact paid action, EVERY turn):
 MANDATORY ACTION RULE: You may call query_status or query_observable_signals at most TWICE IN A ROW. After two consecutive information-gathering actions, your next action MUST be a cost-1 or cost-2 decision action: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, or resolve_blocker. Failure to follow this rule means the project fails.  # FIX-1: restored mandatory action rule
 
 === REQUIRED OUTPUT FORMAT ===
-Return exactly ONE JSON object per turn (no text before or after):
-{
-  "reasoning": "signal evidence: X; inconsistency: Y; therefore action Z because ...",
-  "action_type": "action_name_here",
-  "params": { "param_key": "value" }
-}
+First output a <think> block (stripped before parsing) with:
+  - For each member in AGENT MEMORY: initial_claimed vs commits → deceptive or honest?
+  - Remaining budget and whether any member holds an unresolved crisis task
+  - The single highest-impact action this turn and why
+
+Then output exactly ONE JSON object (example below):
+{"reasoning": "dev_bob claimed 74% initially but only 1 commit — deceptive. Reassigning task_int_1 to dev_alice (availability=0.85).", "action_type": "reassign_task", "params": {"task_id": "task_int_1", "to_member_id": "dev_alice"}}
 
 === ACTION REFERENCE ===
 FREE (query_* never costs budget):
@@ -319,7 +324,9 @@ Keep reassigning tasks every turn until one of these conditions is met.  # FIX-5
 # Self-preservation member (velocity 0.05-0.25) has 0-1 commits.
 _DECEPTION_REPORT_THRESHOLD  = 0.55  # reported_completion floor for all deception rules
 _DECEPTION_TICKET_AGE_DAYS   = 2     # FIX-1: was 3, detects at step 4 not step 6
-_DECEPTION_COMMITS_THRESHOLD = 1     # commits <= this triggers suspicious rule
+# Raised from 1 to 2: velocity=0.25 (max of VELOCITY_LOW) produces round(1.5)=2 commits.
+# Honest members (velocity 0.6-0.9) produce 4-5 commits, so threshold=2 has no false positives.
+_DECEPTION_COMMITS_THRESHOLD = 2
 _SUSPICION_TICKET_AGE_DAYS   = 5     # ticket age floor for suspicious-only rule
 
 # Budget level below which the agent should stop spending and submit
@@ -370,6 +377,14 @@ class LLMAgent:
             "signals": {},
             # FIX: 1 Track queried self-reports so gather phase uses both query channels.
             "member_reports": set(),
+            # member_id -> reported_completion from the VERY FIRST observation (pre-physics).
+            # Candor.py inflates reported based on member.actual_completion which the scenario
+            # sets to 0.60-0.75 for deceptive members.  After the first physics step,
+            # _advance_actual_completions overwrites member.actual_completion with the much
+            # lower task.actual_progress, collapsing reported_completion below detection
+            # thresholds.  We cache the initial value so detection always sees the original
+            # inflated claim, not the post-physics corrected one.
+            "initial_reports": {},
             # member_id -> human-readable reason string
             "deceptive": {},
             # list of action_type strings attempted this episode
@@ -384,18 +399,31 @@ class LLMAgent:
     def _update_memory_from_obs(self, obs: Dict[str, Any]) -> None:
         """
         Extract observable signal data from the incoming observation and run
-        deception detection against current reported values.
+        deception detection against reported values.
+
+        Uses initial_reports (cached before physics overwrites them) so that
+        the inflated self-claim from episode start is always available for
+        comparison even after member.actual_completion drops to match task progress.
 
         Called before building the user message so the memory context is
         always up-to-date before the LLM sees the observation.
         """
+        # Cache initial reported_completion on the very first observation.
+        # The scenario sets member.actual_completion=0.60-0.75 for deceptive members
+        # so their initial reported_completion is high.  After the first physics step,
+        # _advance_actual_completions overwrites this with task.actual_progress (~0.10),
+        # collapsing reported below the detection threshold.  Caching here preserves the
+        # original inflated claim for cross-referencing with signals gathered later.
+        if not self._memory["initial_reports"]:
+            for m in obs.get("team_members", []):
+                self._memory["initial_reports"][m["member_id"]] = m.get("reported_completion", 0.0)
+
         # Extract signals if the last action was query_observable_signals
         if obs.get("action_type") == "query_observable_signals":
             member_id = obs.get("member_id")
             signals = obs.get("signals", {})
             if member_id and signals:
                 self._memory["signals"][member_id] = signals
-                # FIX 3: DEBUG: assert member_id in self._memory["signals"] after query_observable_signals
 
         if obs.get("action_type") == "query_member_report":
             member_id = obs.get("member_id")
@@ -403,7 +431,7 @@ class LLMAgent:
                 self._memory["member_reports"].add(member_id)
 
         # Build current report map from base observation (always present)
-        report_map: Dict[str, float] = {
+        current_report_map: Dict[str, float] = {
             m["member_id"]: m.get("reported_completion", 0.0)
             for m in obs.get("team_members", [])
         }
@@ -412,7 +440,13 @@ class LLMAgent:
         for mid, sigs in self._memory["signals"].items():
             if mid in self._memory["deceptive"]:
                 continue
-            reported = report_map.get(mid, 0.0)
+            # Use the HIGHER of initial claim vs current — physics overwrites
+            # member.actual_completion after step 1, so current_reported drops.
+            # The initial claim is the deception evidence we want to check.
+            current_reported = current_report_map.get(mid, 0.0)
+            initial_reported = self._memory["initial_reports"].get(mid, current_reported)
+            reported = max(initial_reported, current_reported)
+
             ticket_age = sigs.get("ticket_age_days", 0)
             commits = sigs.get("commits_last_72h", 0)
 
@@ -422,34 +456,36 @@ class LLMAgent:
                 and ticket_age > _DECEPTION_TICKET_AGE_DAYS
                 and commits == 0
             )
-            # Rule 2: zero commits + high report (catches deception from episode start)
-            # COMMITS_FULL_VELOCITY=6 in candor.py → honest fast member has 4-6 commits.
-            # Self-preservation member with velocity≤0.05 has 0 commits even while lying.
+            # Rule 2: few commits + high initial claim.  ticket_age > 0 guard removed:
+            # signals are gathered at env step 0-2 where ticket_age is always 0, so
+            # requiring ticket_age > 0 blocked all early detection.
+            # Honest fast members have commits 4-5 (velocity 0.6-0.9) so
+            # _DECEPTION_COMMITS_THRESHOLD=2 does not cause false positives.
             deceptive_commits = (
                 reported > _DECEPTION_REPORT_THRESHOLD
-                and commits <= 1   # FIX-1: was ==0, low-vel members produce commits=1
-                and ticket_age > 0  # at least 1 step old — exclude brand-new assignments
+                and commits <= _DECEPTION_COMMITS_THRESHOLD
             )
-            # Rule 3: minimal commits + high report + some ticket age = suspicious
+            # Rule 3: stale ticket even with modest commits = suspicious
             suspicious = (
                 not deceptive_stale and not deceptive_commits
                 and reported > _DECEPTION_REPORT_THRESHOLD
                 and commits <= _DECEPTION_COMMITS_THRESHOLD
-                and (ticket_age > _SUSPICION_TICKET_AGE_DAYS or reported > 0.65)
+                and (ticket_age > _SUSPICION_TICKET_AGE_DAYS
+                     or reported > _DECEPTION_REPORT_THRESHOLD)
             )
 
             if deceptive_stale or deceptive_commits:
                 reason = (
-                    f"reported={reported:.2f} but "
-                    f"ticket_age={ticket_age}d, commits={commits} → likely lying"
+                    f"initial_reported={initial_reported:.2f}, current={current_reported:.2f} "
+                    f"but ticket_age={ticket_age}d, commits={commits} → likely lying"
                 )
                 self._memory["deceptive"][mid] = reason
                 if self._verbose:
                     print(f"  [DECEPTION DETECTED] {mid}: {reason}")
             elif suspicious:
                 reason = (
-                    f"reported={reported:.2f} but "
-                    f"ticket_age={ticket_age}d, commits={commits} → suspicious"
+                    f"initial_reported={initial_reported:.2f}, current={current_reported:.2f} "
+                    f"but ticket_age={ticket_age}d, commits={commits} → suspicious"
                 )
                 self._memory["deceptive"][mid] = reason
                 if self._verbose:
@@ -484,14 +520,27 @@ class LLMAgent:
                 lines.append(f"  - {mid}: {reason}")
 
         verified = self._memory["signals"]
+        initial_reports = self._memory.get("initial_reports", {})
         if verified:
-            lines.append("CROSS-VERIFIED SIGNALS:")
+            lines.append("CROSS-VERIFIED SIGNALS (initial claim → what signals show):")
             for mid, sigs in verified.items():
                 tag = " [DECEPTIVE]" if mid in deceptive else ""
+                initial = initial_reports.get(mid)
+                ticket_age = sigs.get("ticket_age_days", 0)
+                commits = sigs.get("commits_last_72h", 0)
+                initial_str = f"initial_claimed={initial:.2f}" if initial is not None else ""
+                # Pre-compute contradiction flag for the LLM
+                if (initial is not None and initial > _DECEPTION_REPORT_THRESHOLD
+                        and commits <= _DECEPTION_COMMITS_THRESHOLD):
+                    flag = (f"⚠ CONTRADICTION: claimed {initial:.0%} but only "
+                            f"{commits} commits + {ticket_age}d stale ticket — likely deceptive")
+                else:
+                    flag = "signals consistent"
                 lines.append(
-                    f"  - {mid}{tag}: ticket_age={sigs.get('ticket_age_days')}d,"
-                    f" commits={sigs.get('commits_last_72h')},"
-                    f" peers={sigs.get('peer_mentions')}"
+                    f"  - {mid}{tag}: {initial_str},"
+                    f" ticket_age={ticket_age}d,"
+                    f" commits={commits},"
+                    f" peers={sigs.get('peer_mentions')} | {flag}"
                 )
 
         acts = self._memory["actions_taken"]
@@ -522,6 +571,8 @@ class LLMAgent:
             {"action_type": "...", "params": {...}}
         Falls back to a smart action (never query_status) on parse failure.
         """
+        if self._verbose:
+            print(f"  [RAW LLM] {response[:400]}{'...' if len(response) > 400 else ''}")
         try:
             start = response.find("{")
             end = response.rfind("}") + 1
@@ -534,10 +585,17 @@ class LLMAgent:
                 print(f"  [REASONING] {reasoning[:220]}")
 
             if "action_type" in data and "params" in data:
-                return {"action_type": data["action_type"], "params": data["params"]}
+                action_type = data["action_type"]
+                from env.actions import VALID_ACTION_TYPES
+                if action_type not in VALID_ACTION_TYPES:
+                    raise ValueError(f"Unknown action_type: {action_type!r}. "
+                                     f"Valid: {sorted(VALID_ACTION_TYPES)}")
+                return {"action_type": action_type, "params": data["params"]}
 
-            raise ValueError("Missing action_type or params")
-        except Exception:
+            raise ValueError(f"Missing action_type or params. Got keys: {list(data.keys())}")
+        except Exception as e:
+            if self._verbose:
+                print(f"  [PARSE FAIL] {type(e).__name__}: {e} | using fallback")
             if observation is not None:
                 return self._fallback_action(observation)
             return {"action_type": "query_status", "params": {}}
@@ -738,7 +796,7 @@ class LLMAgent:
                 self._model,
                 self._messages,
                 temperature=self._temperature,
-                max_tokens=768,
+                max_tokens=1024,
             )
         except Exception as e:
             if self._verbose:
@@ -969,24 +1027,43 @@ class LLMAgent:
                                 "params": {"task_id": task_id,  # FIX-4
                                            "to_member_id": best["member_id"]}}  # FIX-4
 
-        # Truly nothing left: communicate if overdue, then submit  # FIX-4
-        acts = self._memory["actions_taken"]  # FIX-4
-        steps_since_comm = next(  # FIX-4
-            (i for i, a in enumerate(reversed(acts)) if a == "communicate"),  # FIX-4
-            len(acts)  # FIX-4
-        )  # FIX-4
-        if steps_since_comm >= 5:  # FIX-4
-            self._memory["actions_taken"].append("communicate")  # FIX-4
-            return {"action_type": "communicate",  # FIX-4
-                    "params": {"message_type": "proactive_escalation_with_plan",  # FIX-4
-                               "content": "Status update during recovery.",  # FIX-4
-                               "target": "both"}}  # FIX-4
+        # Still have unresolved crises with healthy budget: keep the episode running
+        # via free queries so tasks have time to complete.  The environment advances
+        # actual_progress each step; tasks reach the 0.90 resolution threshold in ~20
+        # steps once assigned to a high-velocity member.  Submitting here wastes those
+        # steps.  Free queries also trigger the env's forced-communicate every 4 steps,
+        # which handles the periodic stakeholder update requirement automatically.
+        acts = self._memory["actions_taken"]
+        steps_since_comm = next(
+            (i for i, a in enumerate(reversed(acts)) if a == "communicate"),
+            len(acts)
+        )
+        if unresolved and budget > _SUBMIT_BUDGET_THRESHOLD:
+            if steps_since_comm >= 5:
+                self._memory["actions_taken"].append("communicate")
+                return {"action_type": "communicate",
+                        "params": {"message_type": "proactive_escalation_with_plan",
+                                   "content": "Status update during recovery.",
+                                   "target": "both"}}
+            # Issue a free query to advance time without burning budget.
+            # Cycle through deceptive members first (useful signal), then others.
+            if deceptive_ids:
+                for m in team:
+                    if m["member_id"] in deceptive_ids:
+                        self._memory["actions_taken"].append("query_observable_signals")
+                        return {"action_type": "query_observable_signals",
+                                "params": {"member_id": m["member_id"]}}
+            # Query the member most likely to complete next (highest availability)
+            best = max(team, key=lambda m: m.get("reported_availability", 0))
+            self._memory["actions_taken"].append("query_observable_signals")
+            return {"action_type": "query_observable_signals",
+                    "params": {"member_id": best["member_id"]}}
 
-        self._memory["actions_taken"].append("submit_recovery_plan")  # FIX-4
-        summary = (f"Fallback submit. Deceptive: {list(deceptive_ids)}. "  # FIX-4
-                   f"Unresolved: {[c['crisis_id'] for c in unresolved]}.")  # FIX-4
-        return {"action_type": "submit_recovery_plan",  # FIX-4
-                "params": {"plan_summary": summary}}  # FIX-4
+        self._memory["actions_taken"].append("submit_recovery_plan")
+        summary = (f"Fallback submit. Deceptive: {list(deceptive_ids)}. "
+                   f"Unresolved: {[c['crisis_id'] for c in unresolved]}.")
+        return {"action_type": "submit_recovery_plan",
+                "params": {"plan_summary": summary}}
 
 
 # ---------------------------------------------------------------------------
