@@ -78,6 +78,7 @@ class JiraAdapter:
             "query_member_report":      self._log_query,
             "query_observable_signals": self._log_query,
             "query_ticket":             self._log_query,
+            "query_peer_opinion":       self._log_query,
             "reassign_task":            self._handle_reassign_task,
             "communicate":              self._handle_communicate,
             "cut_scope":                self._handle_cut_scope,
@@ -85,6 +86,8 @@ class JiraAdapter:
             "request_resource":         self._handle_request_resource,
             "update_timeline":          self._handle_update_timeline,
             "consult_expert":           self._log_query,
+            "force_truth":              self._handle_force_truth,
+            "trigger_whistleblower":    self._handle_trigger_whistleblower,
             "resolve_blocker":          self._handle_resolve_blocker,
             "submit_recovery_plan":     self._handle_submit_recovery_plan,
         }
@@ -101,25 +104,106 @@ class JiraAdapter:
         logger.info("[JiraAdapter] %s %s — read-only, no API call", action_type, params)
         return {"logged": True, "action_type": action_type, "params": params}
 
+    def log_reassign_task(self, task_id: str, from_member: str, to_member: str, reason: str = "") -> Dict[str, Any]:
+        """
+        Log a task reassignment to Jira/Linear.
+        dry_run=False: moves the Jira issue to the new assignee.
+        """
+        payload = {
+            "action": "reassign_task",
+            "task_id": task_id,
+            "from": from_member,
+            "to": to_member,
+            "reason": reason,
+        }
+        logger.info(f"[JiraAdapter] reassign_task: {json.dumps(payload)}")
+
+        if self.dry_run or not self._api_key:
+            print(f"[DRY RUN] Would update Jira issue {task_id}: assignee {from_member} → {to_member}")
+            return {"status": "dry_run", "payload": payload}
+
+        try:
+            import urllib.request
+            url = f"{self._base_url}/rest/api/3/issue/{task_id}/assignee"
+            data = json.dumps({"accountId": to_member}).encode()
+            req = urllib.request.Request(url, data=data, method="PUT")
+            req.add_header("Authorization", f"Bearer {self._api_key}")
+            req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return {"status": "ok", "code": resp.getcode()}
+        except Exception as e:
+            logger.error(f"Jira reassign_task failed: {e}")
+            return {"status": "error", "error": str(e)}
+
+    def log_escalate_risk(self, crisis_id: str, severity: float, description: str) -> Dict[str, Any]:
+        """
+        Log a risk escalation as a Jira comment on the crisis issue.
+        dry_run=False: adds a comment to the Jira issue.
+        """
+        payload = {
+            "action": "escalate_risk",
+            "crisis_id": crisis_id,
+            "severity": severity,
+            "description": description,
+        }
+        logger.info(f"[JiraAdapter] escalate_risk: {json.dumps(payload)}")
+
+        if self.dry_run or not self._api_key:
+            print(f"[DRY RUN] Would comment on Jira {crisis_id}: ESCALATION severity={severity:.1f} — {description[:60]}")
+            return {"status": "dry_run", "payload": payload}
+
+        try:
+            import urllib.request
+            url = f"{self._base_url}/rest/api/3/issue/{crisis_id}/comment"
+            body = {"body": {"type": "doc", "version": 1, "content": [
+                {"type": "paragraph", "content": [
+                    {"type": "text", "text": f"[CrisisOps ESCALATION] Severity {severity:.1f}: {description}"}
+                ]}
+            ]}}
+            data = json.dumps(body).encode()
+            req = urllib.request.Request(url, data=data, method="POST")
+            req.add_header("Authorization", f"Bearer {self._api_key}")
+            req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return {"status": "ok", "code": resp.getcode()}
+        except Exception as e:
+            logger.error(f"Jira escalate_risk failed: {e}")
+            return {"status": "error", "error": str(e)}
+
+    def log_communicate(self, message_type: str, content: str, target: str) -> Dict[str, Any]:
+        """
+        Log a stakeholder communication as a Jira issue update or comment.
+        """
+        payload = {"action": "communicate", "message_type": message_type, "content": content, "target": target}
+        logger.info(f"[JiraAdapter] communicate: {json.dumps(payload)}")
+        if self.dry_run or not self._api_key:
+            print(f"[DRY RUN] Would send {message_type} to {target}: {content[:80]}")
+        return {"status": "dry_run" if self.dry_run else "logged", "payload": payload}
+
+    def log_force_truth(self, member_id: str, actual_completion: float) -> Dict[str, Any]:
+        """Log a force_truth event — PM compelled a member to reveal actual progress."""
+        payload = {"action": "force_truth", "member_id": member_id, "actual_completion": actual_completion}
+        logger.info(f"[JiraAdapter] force_truth: {json.dumps(payload)}")
+        if self.dry_run:
+            print(f"[DRY RUN] Would log: {member_id} actual completion revealed = {actual_completion:.1%}")
+        return {"status": "dry_run" if self.dry_run else "logged", "payload": payload}
+
     def _handle_reassign_task(self, action_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Log a task reassignment (would update issue assignee in Jira)."""
-        payload = {
-            "action": "update_issue_assignee",
-            "issue_key": params.get("task_id"),
-            "new_assignee": params.get("to_member_id"),
-            "project_id": self._project_id,
-        }
-        return self._maybe_call("PUT", f"/issue/{params.get('task_id')}/assignee", payload)
+        return self.log_reassign_task(
+            task_id=params.get("task_id", ""),
+            from_member=params.get("from_member_id", "unknown"),
+            to_member=params.get("to_member_id", ""),
+            reason=params.get("reason", ""),
+        )
 
     def _handle_communicate(self, action_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Log a stakeholder communication (would add a Jira comment)."""
-        payload = {
-            "action": "add_comment",
-            "body": f"[{params.get('message_type', 'update')}] {params.get('content', '')}",
-            "target": params.get("target", "both"),
-            "project_id": self._project_id,
-        }
-        return self._maybe_call("POST", "/issue/PM-STATUS/comment", payload)
+        return self.log_communicate(
+            message_type=params.get("message_type", "update"),
+            content=params.get("content", ""),
+            target=params.get("target", "both"),
+        )
 
     def _handle_cut_scope(self, action_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Log a scope cut (would transition issue to Won't Do in Jira)."""
@@ -134,15 +218,11 @@ class JiraAdapter:
 
     def _handle_escalate_risk(self, action_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Log a risk escalation (would create a blocker issue in Jira)."""
-        payload = {
-            "action": "create_linked_issue",
-            "issue_type": "Risk",
-            "summary": f"Risk escalation: {params.get('crisis_id')}",
-            "description": params.get("risk_description", ""),
-            "priority": "High",
-            "project_id": self._project_id,
-        }
-        return self._maybe_call("POST", "/issue", payload)
+        return self.log_escalate_risk(
+            crisis_id=params.get("crisis_id", ""),
+            severity=float(params.get("severity", 0.0)),
+            description=params.get("risk_description", ""),
+        )
 
     def _handle_request_resource(self, action_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Log a resource request (would create a new Jira issue)."""
@@ -175,6 +255,26 @@ class JiraAdapter:
             "project_id": self._project_id,
         }
         return self._maybe_call("POST", f"/issue/{params.get('task_id')}/transitions", payload)
+
+    def _handle_force_truth(self, action_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Log a force_truth action."""
+        return self.log_force_truth(
+            member_id=params.get("member_id", ""),
+            actual_completion=float(params.get("actual_completion", 0.0)),
+        )
+
+    def _handle_trigger_whistleblower(self, action_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Log a whistleblower trigger event."""
+        payload = {
+            "action": "trigger_whistleblower",
+            "member_id": params.get("revealed_member_id", ""),
+            "member_name": params.get("revealed_member_name", ""),
+            "tip": params.get("tip", ""),
+        }
+        logger.info(f"[JiraAdapter] trigger_whistleblower: {json.dumps(payload)}")
+        if self.dry_run:
+            print(f"[DRY RUN] Would log whistleblower tip: {payload.get('tip', '')[:80]}")
+        return {"status": "dry_run" if self.dry_run else "logged", "payload": payload}
 
     def _handle_submit_recovery_plan(
         self, action_type: str, params: Dict[str, Any]

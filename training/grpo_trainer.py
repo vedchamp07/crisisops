@@ -99,6 +99,19 @@ STEP C — ACT (pick the highest-impact paid action, EVERY turn):  # FIX-2: sync
 
 MANDATORY ACTION RULE: You may call query_status or query_observable_signals at most TWICE IN A ROW. After two consecutive information-gathering actions, your next action MUST be a cost-1 or cost-2 decision action: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, or resolve_blocker. Failure to follow this rule means the project fails.  # FIX-2: synced from llm_agent.py
 
+=== AGENT MEMORY (long-horizon tracking) ===
+Every 8 steps (or 5 steps at high curriculum), the environment compresses your
+episode history into "agent_memory" in the observation. This is YOUR compressed
+record of what you have learned. When agent_memory is present:
+- Trust it as your ground truth for who has been verified and flagged
+- Members marked SUSPICIOUS in memory should be treated as deceptive
+- Members marked CAUGHT in memory have already been exposed
+- Do NOT re-query members you have already verified unless their status changed
+- If agent_memory shows a crisis as resolved, do NOT re-escalate it
+
+agent_memory is lossy — use it as a guide but cross-reference with the current
+observation's team_members list for exact reported values.
+
 === REQUIRED OUTPUT FORMAT ===
 Return exactly ONE JSON object per turn (no text before or after):
 {

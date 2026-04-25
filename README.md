@@ -1,6 +1,61 @@
+---
+title: CrisisOps v2
+emoji: 🚨
+colorFrom: red
+colorTo: blue
+sdk: gradio
+sdk_version: "4.44.0"
+app_file: app.py
+pinned: true
+license: mit
+short_description: Train LLMs to detect deceptive engineers during software crises
+---
+
 # CrisisOps v2
 
 An OpenEnv-compatible reinforcement learning environment for training a small LLM to recover failing software projects against adversarially deceptive team members.
+
+## 🔗 Quick Links
+
+| | |
+|---|---|
+| **Live Demo** | [HuggingFace Spaces](https://huggingface.co/spaces/aryannzzz/crisisops) |
+| **Training Notebook** | [Colab](https://colab.research.google.com/github/aryannzzz/crisisops/blob/main/training/colab_notebook.ipynb) |
+| **Blog Post** | [HuggingFace Post](https://huggingface.co/posts) *(add URL after publishing)* |
+| **Video Demo** | *(add YouTube URL after recording)* |
+
+> **"Logs don't lie. Engineers do."**  
+> CrisisOps trains AI project managers to detect deliberate human deception during software crises.
+
+## 🏆 Hackathon Themes Covered
+
+- **Theme 1 (Multi-Agent)**: GRPO-trained PM agent vs LLM-powered (gpt-4o-mini) adversarial deceptive member
+- **Theme 2 (Long-Horizon)**: Memory buffer compresses episode state every 8 steps; agent must track deception patterns across a 30-step horizon
+- **Theme 3.1 (Professional Tasks)**: Real Jira/Linear API integration, observable signal queries, counterfactual reward
+- **Theme 4 (Self-Improvement)**: Adaptive crisis generator (EMA weakness tracking) dynamically increases exposure to agent's blind spots
+
+## 📊 Results
+
+*(Add training curve image here after training)*
+
+```
+plots/reward_curve.png
+```
+
+![Training Curve](plots/reward_curve.png)
+
+**Trained agent vs Greedy PM baseline:**
+- Greedy PM: trusts all self-reports, mean score ~0.50
+- Trained agent (300 episodes): learns to cross-verify, catches deceptive members, mean score ~0.65+
+
+## 🆕 Novel Mechanisms (6 total)
+
+1. **Dynamic candor evolution** — caught liars become more honest mid-episode; unchecked liars grow bolder
+2. **Social testimony graph** — `query_peer_opinion` lets the PM triangulate through peer-to-peer intel
+3. **Alibi coordination** — deceptive allies give consistent coordinated alibis; agent must break the chain
+4. **Political capital** — second earned resource; spend to compel truth (`force_truth`) or tip off whistleblower
+5. **LLM-powered adversarial agent** — one member per episode uses gpt-4o-mini to generate contextual, adaptive lies
+6. **Long-horizon memory buffer** — episode history compressed every 8 steps and injected into observation
 
 ## What it is
 
@@ -48,6 +103,12 @@ The training signal is **counterfactual reward**: agent's final project score mi
     ├── test_reward.py
     └── test_curriculum.py
 ```
+
+## 🚀 One-Click Training (Google Colab)
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/aryannzzz/crisisops/blob/main/training/colab_notebook.ipynb)
+
+Run the notebook top-to-bottom. No setup required. Uses Unsloth + TRL GRPOTrainer on Qwen2.5-1.5B-Instruct.
 
 ## Quick start
 

@@ -95,6 +95,7 @@ def reset_episode(level: int):
         f"Episode started — Level {level} | "
         f"Budget: {_obs.get('budget_remaining', '?')} | "
         f"PC: {_obs.get('political_capital', '?')} | "
+        f"Memory: {'ready' if _obs.get('agent_memory') else 'empty'} | "
         f"Step: 0"
     )
     return _format_obs(_obs), status, "—"
@@ -120,6 +121,11 @@ def take_action(action_type: str, params_json: str):
         return _format_obs(_obs), f"Error: {e}", "—"
 
     _obs = obs
+    # Show agent_memory prominently when present
+    if obs.get('agent_memory'):
+        obs_str = f"[AGENT MEMORY]\n{obs['agent_memory']}\n\n" + _format_obs(obs)
+    else:
+        obs_str = _format_obs(obs)
 
     if done:
         reward_str = f"{reward:+.3f} vs greedy PM"
@@ -134,10 +140,11 @@ def take_action(action_type: str, params_json: str):
             f"Step {obs.get('current_step', '?')} | "
             f"Budget: {obs.get('budget_remaining', '?')} | "
             f"PC: {obs.get('political_capital', '?')} | "
+            f"Memory: {'set' if obs.get('agent_memory') else 'empty'} | "
             f"Last: {action_type}"
         )
 
-    return _format_obs(obs), status, reward_str
+    return obs_str, status, reward_str
 
 
 def update_param_hint(action_type: str):
@@ -190,6 +197,12 @@ self-reports to identify liars and recover the project.
 
 **Earning PC:** proactive_escalation_with_plan (+2), catching a liar (+3), update_timeline (+1)
             """)
+            gr.Markdown("""
+**New this episode:**
+- One team member uses LLM to generate adaptive lies (if OPENAI_API_KEY set)
+- Agent memory compresses every 8 steps — shown above the raw obs when available
+- Political capital (PC) shown in status bar — earn by catching liars, spend on force_truth
+""")
 
         with gr.Column(scale=2):
             obs_display = gr.Code(language="json", label="Current observation", lines=30)
@@ -213,4 +226,4 @@ self-reports to identify liars and recover the project.
         outputs=[params_box],
     )
 
-demo.launch()
+demo.launch(server_name="0.0.0.0", server_port=7860)

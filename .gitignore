@@ -18,5 +18,6 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+.vendor/
 node_modules/
 .next/

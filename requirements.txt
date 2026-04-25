@@ -1,3 +1,4 @@
+# Full requirements for local training. For HF Spaces deployment, see requirements_spaces.txt
 # CrisisOps v2 requirements
 # Install order matters: torch before unsloth, unsloth before trl
 
