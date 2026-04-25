@@ -1,5 +1,6 @@
 # CrisisOps
 
+**OUTDATED**
 Read dump/prompt_v4.txt first. It is the authoritative spec.
 Do not invent anything not in that file.
 Do not simplify reward components or the candor system.
