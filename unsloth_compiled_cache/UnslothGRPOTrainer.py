@@ -1505,7 +1505,8 @@ class _UnslothGRPOTrainer(Trainer):
         return last_hidden_state
 
     # Get the per-token log probabilities for the completions for the model and the reference model
-    def _get_per_token_logps(self, model, input_ids, attention_mask, logits_to_keep):
+    # TRL 0.19+ passes batch_size into this hook; accept and ignore for Unsloth efficient path.
+    def _get_per_token_logps(self, model, input_ids, attention_mask, logits_to_keep, batch_size=None):
         if True: # os.environ.get('UNSLOTH_USE_NEW_MODEL', '0') == '0':
             return None # Unsloth efficient GRPO
         # Otherwise, calculate normally:
