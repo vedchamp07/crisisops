@@ -22,6 +22,7 @@ from env.state import (
     Crisis,
     StakeholderState,
     CANDOR_LEVEL_HONEST,
+    CANDOR_LEVEL_SELF_PRESERVATION,
 )
 from scenarios.level1 import _make_member, VELOCITY_HIGH, VELOCITY_LOW, AVAIL_HIGH, AVAIL_LOW
 
@@ -95,7 +96,7 @@ def scenario_double_crisis_data_scope(rng: random.Random) -> ProjectState:
         Task("t2d_data_2", "Backfill 3 days of missing data", "crisis_data",  "dev_pat",
              "backlog",     True, rng.uniform(3, 5), 0.0),
         Task("t2d_scop_1", "Implement new reporting module",  "crisis_scope", "dev_oscar",
-             "in_progress", True, rng.uniform(4, 7), rng.uniform(0.05, 0.20)),
+               "in_progress", False, rng.uniform(4, 7), rng.uniform(0.05, 0.20)),
         Task("t2d_scop_2", "Resize data warehouse",           "crisis_scope", "dev_quinn",
              "backlog",     False, rng.uniform(2, 4), 0.0),
     ]
@@ -112,7 +113,7 @@ def scenario_double_crisis_data_scope(rng: random.Random) -> ProjectState:
                "Daily ETL broken; analytics dashboards stale for 72h.",
                ["t2d_data_1", "t2d_data_2"], tags=["data", "etl"]),
         Crisis("crisis_scope", "scope_creep",           scope_severity,
-               "Client added 3 new reporting features mid-sprint without scope adjustment.",
+             "Client added 3 scope items mid-sprint; they are nice to have, not blockers.",
                ["t2d_scop_1", "t2d_scop_2"], tags=["scope", "client_facing"]),
     ]
 
@@ -173,10 +174,113 @@ def scenario_double_crisis_infra_regression(rng: random.Random) -> ProjectState:
     )
 
 
+def scenario_honest_but_stalled(rng: random.Random) -> ProjectState:
+    """
+    One deceptive member and one honest-but-blocked member look identical except
+    for peer dependency visibility.
+    """
+    severity = rng.uniform(L2_SEVERITY_MIN, L2_SEVERITY_MAX)
+
+    tasks = [
+        Task("t2hbs_1", "Unblock release transformer", "crisis_hbs", "dev_hbs_liam",
+             "blocked", True, rng.uniform(2, 5), 0.0),
+        Task("t2hbs_2", "Resolve upstream schema lock", "crisis_hbs", "dev_hbs_maya",
+             "blocked", True, rng.uniform(2, 5), 0.0),
+        Task("t2hbs_3", "Prepare fallback validation run", "crisis_hbs", "dev_hbs_noah",
+             "in_progress", False, rng.uniform(1, 3), rng.uniform(0.25, 0.45)),
+    ]
+
+    members = [
+        _make_member("dev_hbs_liam", "Liam", "backend_engineer", VELOCITY_LOW,  AVAIL_LOW,  ["t2hbs_1"], rng),
+        _make_member("dev_hbs_maya", "Maya", "data_engineer",    VELOCITY_HIGH, AVAIL_HIGH, ["t2hbs_2", "hbs_dep_1", "hbs_dep_2", "hbs_dep_3"], rng),
+        _make_member("dev_hbs_noah", "Noah", "backend_engineer", VELOCITY_HIGH, AVAIL_HIGH, ["t2hbs_3", "hbs_dep_1", "hbs_dep_2", "hbs_dep_3"], rng),
+    ]
+    # Tests specificity: peer_mentions is the ONLY differentiator between liam and maya.
+    # Correct behavior: flag dev_hbs_liam (peer_mentions=0), not dev_hbs_maya (peer_mentions=3).
+    #
+    # peer_mentions is NOT a directly-settable field.  candor.compute_peer_mentions()
+    # derives it by counting shared task IDs across member.assigned_task_ids lists.
+    # This scenario achieves the split through task structure:
+    #   - maya and noah both carry hbs_dep_1/2/3 → their shared tasks give maya peer_mentions=3
+    #   - liam carries only t2hbs_1 (no other member shares it) → peer_mentions=0
+    # hbs_dep_1/2/3 are phantom task IDs (no Task objects); the environment handles
+    # missing tasks gracefully in _advance_actual_completions (get_task returns None → skip).
+    members[0].actual_velocity = 0.0
+    members[1].actual_velocity = 0.0
+    members[0].actual_completion = 0.0
+    members[1].actual_completion = 0.0
+    members[0].candor_level = CANDOR_LEVEL_SELF_PRESERVATION
+    members[0].inflation_bias = 0.75
+    members[1].candor_level = CANDOR_LEVEL_HONEST
+    members[1].inflation_bias = 0.02
+
+    crises = [
+        Crisis("crisis_hbs", "dependency_blocker", severity,
+               "A release dependency chain stalled; one blocked engineer is highly referenced, one is isolated.",
+               ["t2hbs_1", "t2hbs_2", "t2hbs_3"], tags=["dependency", "specificity_probe"]),
+    ]
+
+    return ProjectState(
+        team_members=members,
+        tasks=tasks,
+        crises=crises,
+        stakeholder=StakeholderState(
+            client_satisfaction=rng.uniform(5.0, 7.0),
+            exec_support=rng.uniform(6.0, 8.0),
+        ),
+        curriculum_level=2,
+    )
+
+
+def scenario_majority_deception(rng: random.Random) -> ProjectState:
+    """
+    All members are deceptive, so the agent must use consult_expert() to break
+    signal deadlock before choosing reassignment.
+    """
+    tasks = [
+        Task("t2md_1", "Patch payments retry path", "crisis_md", "dev_md_ava",
+             "in_progress", True, rng.uniform(2, 5), rng.uniform(0.05, 0.15)),
+        Task("t2md_2", "Repair queue consumer backpressure", "crisis_md", "dev_md_ben",
+             "in_progress", True, rng.uniform(2, 5), rng.uniform(0.05, 0.15)),
+        Task("t2md_3", "Stabilize billing reconciliation", "crisis_md", "dev_md_cleo",
+             "in_progress", True, rng.uniform(2, 5), rng.uniform(0.05, 0.15)),
+    ]
+
+    members = [
+        _make_member("dev_md_ava",  "Ava",  "backend_engineer", VELOCITY_LOW, AVAIL_LOW, ["t2md_1"], rng),
+        _make_member("dev_md_ben",  "Ben",  "backend_engineer", VELOCITY_LOW, AVAIL_LOW, ["t2md_2"], rng),
+        _make_member("dev_md_cleo", "Cleo", "data_engineer",    VELOCITY_LOW, AVAIL_LOW, ["t2md_3"], rng),
+    ]
+    for member in members:
+        member.candor_level = CANDOR_LEVEL_SELF_PRESERVATION
+        member.inflation_bias = 0.70
+
+    crises = [
+        Crisis("crisis_md", "payment_integrity_failure", 8.0,
+               "Payment integrity degraded across retries and reconciliation; all owners claim near-complete fixes.",
+               ["t2md_1", "t2md_2", "t2md_3"], tags=["payments", "all_deceptive"]),
+    ]
+
+    # Tests consult_expert() as fallback when all signals are bad
+    # Eval note: consult_expert should appear in the action distribution here.
+    return ProjectState(
+        team_members=members,
+        tasks=tasks,
+        crises=crises,
+        stakeholder=StakeholderState(
+            client_satisfaction=rng.uniform(4.5, 6.5),
+            exec_support=rng.uniform(5.5, 7.5),
+        ),
+        curriculum_level=2,
+    )
+
+
 LEVEL2_SCENARIOS = [
     scenario_double_crisis_auth_perf,
     scenario_double_crisis_data_scope,
     scenario_double_crisis_infra_regression,
+    scenario_honest_but_stalled,
+    scenario_majority_deception,
 ]
 
 

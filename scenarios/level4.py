@@ -28,6 +28,7 @@ from scenarios.level1 import _make_member, VELOCITY_HIGH, VELOCITY_LOW, AVAIL_HI
 L4_SEVERITY_MIN = 8.0
 L4_SEVERITY_MAX = 10.0
 VELOCITY_MINIMAL = (0.01, 0.12)   # Level 4 deceptive members barely progress
+VELOCITY_MINIMAL_VARIANT = (0.01, 0.20)  # wider range for signal variance
 
 
 def scenario_full_disaster(rng: random.Random) -> ProjectState:
@@ -122,11 +123,11 @@ def scenario_information_war(rng: random.Random) -> ProjectState:
     ]
 
     members = [
-        _make_member("dev_x1", "Boris",   "backend_engineer",  VELOCITY_MINIMAL, AVAIL_LOW, ["t4b_1", "t4b_6"], rng),
-        _make_member("dev_x2", "Camille", "backend_engineer",  VELOCITY_MINIMAL, AVAIL_LOW, ["t4b_2"],          rng),
-        _make_member("dev_x3", "Dmitri",  "security_engineer", VELOCITY_MINIMAL, AVAIL_LOW, ["t4b_3"],          rng),
-        _make_member("dev_x4", "Elena",   "qa_engineer",       VELOCITY_MINIMAL, AVAIL_LOW, ["t4b_4"],          rng),
-        _make_member("dev_x5", "Fabio",   "devops_engineer",   VELOCITY_MINIMAL, AVAIL_LOW, ["t4b_5"],          rng),
+        _make_member("dev_x1", "Boris",   "backend_engineer",  VELOCITY_MINIMAL,         AVAIL_LOW, ["t4b_1", "t4b_6"], rng),
+        _make_member("dev_x2", "Camille", "backend_engineer",  VELOCITY_MINIMAL_VARIANT, AVAIL_LOW, ["t4b_2"],          rng),
+        _make_member("dev_x3", "Dmitri",  "security_engineer", VELOCITY_MINIMAL,         AVAIL_LOW, ["t4b_3"],          rng),
+        _make_member("dev_x4", "Elena",   "qa_engineer",       VELOCITY_MINIMAL,         AVAIL_LOW, ["t4b_4"],          rng),
+        _make_member("dev_x5", "Fabio",   "devops_engineer",   VELOCITY_MINIMAL_VARIANT, AVAIL_LOW, ["t4b_5"],          rng),
     ]
 
     crises = [

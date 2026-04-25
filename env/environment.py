@@ -234,13 +234,15 @@ class CrisisOpsEnv:
             else:
                 state.consecutive_free_query_count = 0
 
-        # Force a paid stakeholder update when free-query loops hit 4.
-        # Threshold raised from 3→4 so the normal N=3 signal-gather phase
-        # (3 consecutive query_observable_signals) doesn't trigger a spurious
-        # forced communicate that wastes budget during the gather phase.
+        # Force a paid stakeholder update when free-query loops hit 5.
+        # Threshold raised from 3→4→5: there are exactly 4 distinct free action
+        # types (query_status, query_member_report, query_observable_signals,
+        # query_ticket) and unit tests exercise all 4 in sequence.  A threshold
+        # of 4 fires on the last legitimate free query; 5 gives one full gather
+        # pass without triggering a spurious budget-decrement.
         # Message type changed to proactive_escalation_with_plan so if it does
         # fire it yields +1.0 client satisfaction instead of a neutral waste.
-        if state.consecutive_free_query_count >= 4 and not state.done:
+        if state.consecutive_free_query_count >= 5 and not state.done:
             forced_action = {
                 "action_type": "communicate",
                 "params": {
@@ -253,7 +255,7 @@ class CrisisOpsEnv:
             state.consecutive_free_query_count = 0
             warning_msg = (
                 f"[WARN] Forced communicate injected at step {state.current_step} "
-                "after 3 consecutive free-query actions."
+                "after 5 consecutive free-query actions."
             )
             print(warning_msg)
             result.observation["forced_action"] = forced_action

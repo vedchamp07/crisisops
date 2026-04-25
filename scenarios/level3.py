@@ -21,6 +21,8 @@ from env.state import (
     Task,
     Crisis,
     StakeholderState,
+    CANDOR_LEVEL_HONEST,
+    CANDOR_LEVEL_SELF_PRESERVATION,
 )
 from scenarios.level1 import _make_member, VELOCITY_HIGH, VELOCITY_LOW, AVAIL_HIGH, AVAIL_LOW
 
@@ -198,10 +200,173 @@ def scenario_cascading_release_failure(rng: random.Random) -> ProjectState:
     )
 
 
+def scenario_morale_collapse(rng: random.Random) -> ProjectState:
+    """
+    Low team morale compresses honest productivity signals toward deceptive range.
+
+    The agent must combine multiple cues instead of relying on commit count alone.
+    """
+    severity = rng.uniform(L3_SEVERITY_MIN, L3_SEVERITY_MAX)
+
+    tasks = [
+        Task("t3m_1", "Stabilise delayed integration bridge", "c3m_rel", "dev_mc_1",
+             "in_progress", True, rng.uniform(2, 5), rng.uniform(0.05, 0.15)),
+        Task("t3m_2", "Unblock partner schema handoff", "c3m_rel", "dev_mc_2",
+             "in_progress", True, rng.uniform(2, 5), rng.uniform(0.20, 0.40)),
+        Task("t3m_3", "Run constrained regression sweep", "c3m_rel", "dev_mc_3",
+             "in_progress", False, rng.uniform(1, 3), rng.uniform(0.20, 0.40)),
+    ]
+
+    members = [
+        _make_member("dev_mc_1", "Marta", "backend_engineer", VELOCITY_LOW, AVAIL_LOW, ["t3m_1"], rng),
+        _make_member("dev_mc_2", "Nikhil", "data_engineer", VELOCITY_MID, AVAIL_HIGH, ["t3m_2", "mc_dep_1"], rng),
+        _make_member("dev_mc_3", "Olivia", "qa_engineer", VELOCITY_MID, AVAIL_HIGH, ["t3m_3", "mc_dep_1"], rng),
+    ]
+    # Tests detection robustness when honest signals are degraded
+    members[0].candor_level = CANDOR_LEVEL_SELF_PRESERVATION
+    members[1].candor_level = CANDOR_LEVEL_HONEST
+    members[2].candor_level = CANDOR_LEVEL_HONEST
+    members[1].actual_velocity = rng.uniform(0.34, 0.49)  # honest commits compress to 2-3
+    members[2].actual_velocity = rng.uniform(0.34, 0.49)
+    for member in members:
+        member.morale = 2.5
+
+    crises = [
+        Crisis("c3m_rel", "release_stability", severity,
+               "Low morale has slowed execution and increased ambiguity in progress signals.",
+               ["t3m_1", "t3m_2", "t3m_3"], tags=["morale", "signal_overlap"]),
+    ]
+
+    return ProjectState(
+        team_members=members,
+        tasks=tasks,
+        crises=crises,
+        stakeholder=StakeholderState(
+            client_satisfaction=rng.uniform(3.5, 5.5),
+            exec_support=rng.uniform(5.0, 7.0),
+        ),
+        curriculum_level=3,
+    )
+
+
+def scenario_cascading_crises(rng: random.Random) -> ProjectState:
+    """
+    Two simultaneous crises share one honest member across both workstreams.
+
+    This creates resource contention with less budget slack.
+    """
+    s1 = rng.uniform(L3_SEVERITY_MIN, L3_SEVERITY_MAX)
+    s2 = rng.uniform(L3_SEVERITY_MIN - 1, L3_SEVERITY_MAX)
+
+    tasks = [
+        Task("t3cc_1", "Restore failed integration handshake", "c3cc_int", "dev_cc_1",
+             "in_progress", True, rng.uniform(2, 5), rng.uniform(0.05, 0.15)),
+        Task("t3cc_2", "Patch integration rollback guardrails", "c3cc_int", "dev_cc_2",
+             "in_progress", True, rng.uniform(2, 4), rng.uniform(0.20, 0.40)),
+        Task("t3cc_3", "Repair pipeline checkpoint drift", "c3cc_data", "dev_cc_2",
+             "in_progress", True, rng.uniform(2, 5), rng.uniform(0.20, 0.40)),
+        Task("t3cc_4", "Backfill delayed warehouse partitions", "c3cc_data", "dev_cc_3",
+             "blocked", True, rng.uniform(2, 5), 0.0),
+    ]
+
+    members = [
+        _make_member("dev_cc_1", "Pavel", "integration_engineer", VELOCITY_LOW, AVAIL_LOW, ["t3cc_1"], rng),
+        _make_member("dev_cc_2", "Quincy", "backend_engineer", VELOCITY_HIGH, AVAIL_HIGH, ["t3cc_2", "t3cc_3"], rng),
+        _make_member("dev_cc_3", "Rhea", "data_engineer", VELOCITY_HIGH, AVAIL_HIGH, ["t3cc_4"], rng),
+    ]
+    members[0].candor_level = CANDOR_LEVEL_SELF_PRESERVATION
+    members[1].candor_level = CANDOR_LEVEL_HONEST
+    members[2].candor_level = CANDOR_LEVEL_HONEST
+
+    crises = [
+        Crisis("c3cc_int", "integration_failure", s1,
+               "Core integration handshake is failing and rollback safety is incomplete.",
+               ["t3cc_1", "t3cc_2"], tags=["integration", "resource_contention"]),
+        Crisis("c3cc_data", "data_pipeline_failure", s2,
+               "Pipeline checkpoint drift caused partition lag and downstream stale reporting.",
+               ["t3cc_3", "t3cc_4"], tags=["data", "resource_contention"]),
+    ]
+
+    # Tests prioritization under resource contention
+    return ProjectState(
+        budget_remaining=15,
+        team_members=members,
+        tasks=tasks,
+        crises=crises,
+        stakeholder=StakeholderState(
+            client_satisfaction=rng.uniform(3.5, 5.5),
+            exec_support=rng.uniform(5.0, 7.0),
+        ),
+        curriculum_level=3,
+    )
+
+
+def scenario_trust_reversal(rng: random.Random) -> ProjectState:
+    """
+    One initially reliable member has high completed load but low remaining
+    capacity, while the rest present deceptive profiles.
+    """
+    s1 = rng.uniform(L3_SEVERITY_MIN, L3_SEVERITY_MAX)
+    s2 = rng.uniform(L3_SEVERITY_MIN - 1, L3_SEVERITY_MAX)
+
+    tasks = [
+        Task("t3tr_1", "Finalize release hotfix chain", "c3tr_rel", "dev_tr_1",
+             "in_progress", True, rng.uniform(2, 4), 0.65),
+        Task("t3tr_2", "Repair auth fallback path", "c3tr_rel", "dev_tr_2",
+             "in_progress", True, rng.uniform(2, 5), rng.uniform(0.05, 0.20)),
+        Task("t3tr_3", "Stabilize job queue retries", "c3tr_ops", "dev_tr_3",
+             "in_progress", True, rng.uniform(2, 5), rng.uniform(0.05, 0.20)),
+        Task("t3tr_4", "Validate data consistency patch", "c3tr_ops", "dev_tr_4",
+             "blocked", True, rng.uniform(2, 5), 0.0),
+        Task("t3tr_5", "Draft stakeholder recovery timeline", "c3tr_ops", "dev_tr_1",
+             "backlog", False, rng.uniform(1, 2), 0.0),
+    ]
+
+    members = [
+        _make_member("dev_tr_1", "Sana", "backend_engineer", VELOCITY_HIGH, AVAIL_LOW, ["t3tr_1", "t3tr_5"], rng),
+        _make_member("dev_tr_2", "Tariq", "backend_engineer", VELOCITY_LOW, AVAIL_LOW, ["t3tr_2"], rng),
+        _make_member("dev_tr_3", "Umair", "devops_engineer", VELOCITY_LOW, AVAIL_LOW, ["t3tr_3"], rng),
+        _make_member("dev_tr_4", "Violet", "qa_engineer", VELOCITY_LOW, AVAIL_LOW, ["t3tr_4"], rng),
+    ]
+    # Approximates trust reversal: high-velocity but low remaining
+    # capacity. True mid-episode state change requires env/state.py support —
+    # see pending_state_changes TODO if that is added later.
+    members[0].actual_completion = 0.65
+    members[0].actual_availability = 0.30
+    members[0].reported_availability = 0.30
+    members[0].candor_level = CANDOR_LEVEL_HONEST
+    members[1].candor_level = CANDOR_LEVEL_SELF_PRESERVATION
+    members[2].candor_level = CANDOR_LEVEL_SELF_PRESERVATION
+    members[3].candor_level = CANDOR_LEVEL_SELF_PRESERVATION
+
+    crises = [
+        Crisis("c3tr_rel", "release_failure", s1,
+               "Release recovery depends on a previously reliable owner with limited remaining capacity.",
+               ["t3tr_1", "t3tr_2"], tags=["trust", "load_balance"]),
+        Crisis("c3tr_ops", "operations_instability", s2,
+               "Ops instability persists while three low-reliability owners report optimistic progress.",
+               ["t3tr_3", "t3tr_4", "t3tr_5"], tags=["trust", "consult_expert"]),
+    ]
+
+    return ProjectState(
+        team_members=members,
+        tasks=tasks,
+        crises=crises,
+        stakeholder=StakeholderState(
+            client_satisfaction=rng.uniform(3.0, 5.0),
+            exec_support=rng.uniform(5.0, 7.0),
+        ),
+        curriculum_level=3,
+    )
+
+
 LEVEL3_SCENARIOS = [
     scenario_cascading_infra,
     scenario_adversarial_majority,
     scenario_cascading_release_failure,
+    scenario_morale_collapse,
+    scenario_cascading_crises,
+    scenario_trust_reversal,
 ]
 
 

@@ -137,11 +137,11 @@ def scenario_integration_failure(rng: random.Random) -> ProjectState:
 
     members = [
         _make_member("dev_alice", "Alice", "engineer",    VELOCITY_HIGH, AVAIL_HIGH, ["task_int_2"], rng),
-        _make_member("dev_bob",   "Bob",   "engineer",    VELOCITY_LOW,  AVAIL_LOW,  ["task_int_1"], rng),
         _make_member("dev_carol", "Carol", "qa_engineer", VELOCITY_HIGH, AVAIL_HIGH, ["task_int_3"], rng),
-    ]
+        _make_member("dev_bob",   "Bob",   "engineer",    VELOCITY_LOW,  AVAIL_LOW,  ["task_int_1"], rng),
+    ]  # position-bias prevention: deceptive at index 2
     # FIX: 2 Bob is the deceptive member and should begin near done but stalled.
-    members[1].actual_completion = rng.uniform(
+    members[2].actual_completion = rng.uniform(
         DECEPTIVE_ACTUAL_COMPLETION_MIN,
         DECEPTIVE_ACTUAL_COMPLETION_MAX,
     )
@@ -220,7 +220,7 @@ def scenario_performance_regression(rng: random.Random) -> ProjectState:
         _make_member("dev_dave",  "Dave",  "backend_engineer", VELOCITY_LOW,  AVAIL_LOW,  ["task_perf_1"], rng),
         _make_member("dev_eve",   "Eve",   "backend_engineer", VELOCITY_HIGH, AVAIL_HIGH, ["task_perf_2"], rng),
         _make_member("dev_frank", "Frank", "qa_lead",          VELOCITY_HIGH, AVAIL_HIGH, ["task_perf_3"], rng),
-    ]
+    ]  # position-bias prevention: deceptive at index 0
     # FIX: 2 Dave is the deceptive member and should begin near done but stalled.
     members[0].actual_completion = rng.uniform(
         DECEPTIVE_ACTUAL_COMPLETION_MIN,
@@ -298,12 +298,12 @@ def scenario_data_pipeline_failure(rng: random.Random) -> ProjectState:
     ]
 
     members = [
-        _make_member("dev_grace", "Grace",  "data_engineer",   VELOCITY_LOW,  AVAIL_LOW,  ["task_pipe_1"], rng),
         _make_member("dev_henry", "Henry",  "backend_engineer", VELOCITY_HIGH, AVAIL_HIGH, ["task_pipe_2"], rng),
+        _make_member("dev_grace", "Grace",  "data_engineer",    VELOCITY_LOW,  AVAIL_LOW,  ["task_pipe_1"], rng),
         _make_member("dev_irene", "Irene",  "devops_engineer",  VELOCITY_HIGH, AVAIL_HIGH, ["task_pipe_3"], rng),
-    ]
+    ]  # position-bias prevention: deceptive at index 1
     # FIX: 2 Grace is the deceptive member and should begin near done but stalled.
-    members[0].actual_completion = rng.uniform(
+    members[1].actual_completion = rng.uniform(
         DECEPTIVE_ACTUAL_COMPLETION_MIN,
         DECEPTIVE_ACTUAL_COMPLETION_MAX,
     )
@@ -332,6 +332,162 @@ def scenario_data_pipeline_failure(rng: random.Random) -> ProjectState:
     )
 
 
+def scenario_high_reporter_deception(rng: random.Random) -> ProjectState:
+    """
+    A deceptive member reports near-complete despite barely starting.
+
+    This template pressures the policy to inspect contradictions even when
+    reported completion is extremely high.
+    """
+    severity = rng.uniform(L1_SEVERITY_MIN, L1_SEVERITY_MAX)
+
+    tasks = [
+        Task(
+            task_id="task_hrd_1",
+            title="Stabilise release blocker hotfix",
+            crisis_id="crisis_hrd",
+            assigned_member_id="dev_juno",
+            status="in_progress",
+            is_critical_path=True,
+            estimated_days=rng.uniform(2.0, 4.0),
+            actual_progress=0.08,
+        ),
+        Task(
+            task_id="task_hrd_2",
+            title="Validate rollback safety checks",
+            crisis_id="crisis_hrd",
+            assigned_member_id="dev_kei",
+            status="in_progress",
+            is_critical_path=True,
+            estimated_days=rng.uniform(1.0, 3.0),
+            actual_progress=rng.uniform(0.35, 0.60),
+        ),
+        Task(
+            task_id="task_hrd_3",
+            title="Prepare regression QA pass",
+            crisis_id="crisis_hrd",
+            assigned_member_id="dev_lina",
+            status="backlog",
+            is_critical_path=False,
+            estimated_days=rng.uniform(1.0, 2.0),
+            actual_progress=0.0,
+        ),
+    ]
+
+    members = [
+        _make_member("dev_juno", "Juno", "backend_engineer", VELOCITY_LOW,  AVAIL_LOW,  ["task_hrd_1"], rng),
+        _make_member("dev_kei",  "Kei",  "backend_engineer", VELOCITY_HIGH, AVAIL_HIGH, ["task_hrd_2"], rng),
+        _make_member("dev_lina", "Lina", "qa_engineer",      VELOCITY_HIGH, AVAIL_HIGH, ["task_hrd_3"], rng),
+    ]
+    # Tests deception detection at extreme reported values
+    members[0].actual_completion = 0.08
+    members[0].reported_completion = 0.92
+    members[0].inflation_bias = 0.90
+    members[0].candor_level = CANDOR_LEVEL_SELF_PRESERVATION
+
+    crisis = Crisis(
+        crisis_id="crisis_hrd",
+        crisis_type="release_blocker",
+        severity=severity,
+        description=(
+            "A release blocker hotfix is allegedly almost complete, but downstream "
+            "validation keeps failing and delivery confidence is low."
+        ),
+        affected_task_ids=["task_hrd_1", "task_hrd_2", "task_hrd_3"],
+        tags=["deception_probe", "reported_vs_actual"],
+    )
+
+    return ProjectState(
+        team_members=members,
+        tasks=tasks,
+        crises=[crisis],
+        stakeholder=StakeholderState(
+            client_satisfaction=rng.uniform(5.5, 7.5),
+            exec_support=rng.uniform(6.5, 8.5),
+        ),
+        curriculum_level=1,
+    )
+
+
+def scenario_peer_dependency_failure(rng: random.Random) -> ProjectState:
+    """
+    A deceptive member evades stale-ticket and low-commit heuristics.
+
+    The member appears active but has zero dependency coupling.
+    """
+    severity = rng.uniform(L1_SEVERITY_MIN, L1_SEVERITY_MAX)
+
+    tasks = [
+        Task(
+            task_id="task_pdf_1",
+            title="Patch critical integration adapter",
+            crisis_id="crisis_pdf",
+            assigned_member_id="dev_mira",
+            status="in_progress",
+            is_critical_path=True,
+            estimated_days=rng.uniform(2.0, 4.0),
+            actual_progress=0.08,
+        ),
+        Task(
+            task_id="task_pdf_2",
+            title="Coordinate downstream contract checks",
+            crisis_id="crisis_pdf",
+            assigned_member_id="dev_noel",
+            status="in_progress",
+            is_critical_path=True,
+            estimated_days=rng.uniform(1.0, 3.0),
+            actual_progress=rng.uniform(0.35, 0.55),
+        ),
+        Task(
+            task_id="task_pdf_3",
+            title="Run client-facing smoke verification",
+            crisis_id="crisis_pdf",
+            assigned_member_id="dev_omar",
+            status="backlog",
+            is_critical_path=False,
+            estimated_days=rng.uniform(1.0, 2.0),
+            actual_progress=0.0,
+        ),
+    ]
+
+    members = [
+        _make_member("dev_mira", "Mira", "integration_engineer", VELOCITY_LOW,  AVAIL_LOW,  ["task_pdf_1"], rng),
+        _make_member("dev_noel", "Noel", "backend_engineer",     VELOCITY_HIGH, AVAIL_HIGH, ["task_pdf_2", "dep_link_a", "dep_link_b"], rng),
+        _make_member("dev_omar", "Omar", "qa_engineer",          VELOCITY_HIGH, AVAIL_HIGH, ["task_pdf_3", "dep_link_a", "dep_link_b"], rng),
+    ]
+    # Tests peer_mentions as primary detection signal, not backup
+    # candor.py computes peer_mentions via assigned_task_ids overlap. Keeping
+    # dev_mira's task IDs unique yields peer_mentions=0 with existing API.
+    members[0].actual_completion = 0.08
+    members[0].reported_completion = 0.85
+    members[0].actual_velocity = 0.51  # round(0.51*6)=3 commits > threshold(2); forces peer_mentions as primary signal
+    members[0].inflation_bias = 0.85
+    members[0].candor_level = CANDOR_LEVEL_SELF_PRESERVATION
+
+    crisis = Crisis(
+        crisis_id="crisis_pdf",
+        crisis_type="integration_dependency_failure",
+        severity=severity,
+        description=(
+            "Adapter work is reported as healthy, but dependency coupling has gone "
+            "silent and critical downstream teams no longer reference the owner."
+        ),
+        affected_task_ids=["task_pdf_1", "task_pdf_2", "task_pdf_3"],
+        tags=["dependency", "peer_signal", "deception_probe"],
+    )
+
+    return ProjectState(
+        team_members=members,
+        tasks=tasks,
+        crises=[crisis],
+        stakeholder=StakeholderState(
+            client_satisfaction=rng.uniform(5.0, 7.0),
+            exec_support=rng.uniform(6.5, 8.5),
+        ),
+        curriculum_level=1,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Scenario registry
 # ---------------------------------------------------------------------------
@@ -340,6 +496,8 @@ LEVEL1_SCENARIOS = [
     scenario_integration_failure,
     scenario_performance_regression,
     scenario_data_pipeline_failure,
+    scenario_high_reporter_deception,
+    scenario_peer_dependency_failure,
 ]
 
 
