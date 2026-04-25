@@ -550,6 +550,44 @@ class CrisisOpsEnv:
         return agent_score - greedy_score
 
 
+_OPENENV_ENV: Optional[CrisisOpsEnv] = None
+
+
+def _get_openenv_env(curriculum_level: int = 1) -> CrisisOpsEnv:
+    """
+    Return module-level singleton env for OpenEnv-style function callers.
+
+    Some OpenEnv runners import `env.environment` and invoke top-level
+    `reset/step/state` functions directly instead of instantiating a class.
+    """
+    global _OPENENV_ENV
+    if _OPENENV_ENV is None or _OPENENV_ENV._curriculum_level != curriculum_level:
+        _OPENENV_ENV = CrisisOpsEnv(curriculum_level=curriculum_level)
+    return _OPENENV_ENV
+
+
+def reset(seed: Optional[int] = None, curriculum_level: int = 1) -> Dict[str, Any]:
+    """OpenEnv-compatible module-level reset wrapper."""
+    env = _get_openenv_env(curriculum_level=curriculum_level)
+    return env.reset(seed=seed)
+
+
+def step(action: Dict[str, Any]) -> Tuple[Dict[str, Any], float, bool, Dict[str, Any]]:
+    """OpenEnv-compatible module-level step wrapper."""
+    env = _get_openenv_env()
+    if env._state is None:
+        env.reset()
+    return env.step(action)
+
+
+def state() -> Dict[str, Any]:
+    """OpenEnv-compatible module-level state wrapper."""
+    env = _get_openenv_env()
+    if env._state is None:
+        env.reset()
+    return env.state()
+
+
 def _advance_actual_completions(state: ProjectState) -> None:
     """
     Advance each team member's actual_completion and refresh reported values.
