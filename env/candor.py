@@ -63,6 +63,58 @@ AVAILABILITY_NOISE_STD: Dict[str, float] = {
 }
 
 # ---------------------------------------------------------------------------
+# Dynamic candor evolution constants
+# ---------------------------------------------------------------------------
+
+# Candor boost when PM catches a liar (cross-verifies THEN takes punitive action)
+CANDOR_CATCH_BOOST = 0.08
+
+# Inflation bias shrinkage multiplier when caught (caught liars over-report less)
+CANDOR_INFLATION_SHRINK = 0.80
+
+# Inflation bias growth multiplier when never checked (ignored liars grow bolder)
+CANDOR_IGNORE_GROW = 1.08
+
+# Political capital awarded to PM for successfully catching a liar
+PC_CATCH_REWARD = 3.0
+
+
+def apply_caught_effect(member: TeamMember, state: "ProjectState") -> None:
+    """
+    Call when the PM cross-verifies a self-preservation member AND takes a
+    punitive action (reassign_task or escalate_risk) within 3 steps.
+
+    Effects:
+    - member.candor increases slightly (caught, now more careful)
+    - member.inflation_bias shrinks (reports become less inflated)
+    - PM is awarded PC_CATCH_REWARD political capital
+    - Sets caught_this_episode = True to prevent double-counting
+
+    Idempotent: does nothing if already caught this episode.
+    """
+    if member.caught_this_episode:
+        return
+    member.caught_this_episode = True
+    member.candor = min(1.0, member.candor + CANDOR_CATCH_BOOST)
+    member.inflation_bias = max(0.0, member.inflation_bias * CANDOR_INFLATION_SHRINK)
+    refresh_reported_values(member)
+    state.political_capital = min(20.0, state.political_capital + PC_CATCH_REWARD)
+
+
+def apply_ignored_effect(member: TeamMember) -> None:
+    """
+    Call at episode end for self-preservation members never cross-verified.
+
+    An unchecked liar grows bolder: inflation_bias increases slightly.
+    This has no effect on the current episode's reward (it fires at done=True)
+    but the updated state is logged for analysis and future curriculum tracking.
+    """
+    if (member.candor_level == CANDOR_LEVEL_SELF_PRESERVATION
+            and member.times_cross_verified == 0):
+        member.inflation_bias = min(0.95, member.inflation_bias * CANDOR_IGNORE_GROW)
+        refresh_reported_values(member)
+
+# ---------------------------------------------------------------------------
 # Observable signal scaling constants
 # (all derived from actual state — spec is explicit about this)
 # ---------------------------------------------------------------------------

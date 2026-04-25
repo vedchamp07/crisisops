@@ -122,10 +122,25 @@ COST-1 (deduct 1 from budget):
     consult_expert {}
     submit_recovery_plan {"plan_summary": "<text>", "risk_items": [], "timeline": "<date>"}
 
+query_peer_opinion   (cost 1):  Ask one member about another's progress. Honest members give
+                                accurate estimates. Allied deceptive members cover for each other.
+                                Params: {asked_member_id, about_member_id}
+
+force_truth          (cost 1 + 3 PC):  Compel a member to reveal actual_completion.
+                                Only use when you have >= 3 political_capital.
+                                Params: {member_id}
+
+trigger_whistleblower (cost 1 + 6 PC): Anonymous tip reveals the most deceptive uncaught member.
+                                Only use when you have >= 6 political_capital.
+                                Params: {}
+
 COST-2 (deduct 2 from budget):
     resolve_blocker {"task_id": "<id>", "resolution_notes": "<text>"}
 
 Budget starts at 20. Exhausting budget without submitting = -0.30 penalty to your score.
+POLITICAL CAPITAL (PC): starts at 5. Earn by: proactive_escalation_with_plan (+2),
+catching a liar (+3), update_timeline (+1). Spend on: force_truth (-3), trigger_whistleblower (-6).
+Current PC is shown in every observation under 'political_capital'.
 Only submit_recovery_plan when is_resolved=true for all crises, OR budget <= 5.  # FIX-5: synced from llm_agent.py
 Submitting early (before tasks complete) wastes the entire episode.  # FIX-5: synced from llm_agent.py
 Keep reassigning tasks every turn until one of these conditions is met.  # FIX-5: synced from llm_agent.py

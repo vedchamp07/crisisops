@@ -71,6 +71,17 @@ def scenario_full_disaster(rng: random.Random) -> ProjectState:
         _make_member("dev_w5", "Aaron",   "devops_engineer",    VELOCITY_MINIMAL, AVAIL_LOW, ["t4a_5"],          rng),
     ]
 
+    # Level 4: information war - all members deceptive, paired into alliances
+    members[0].alliance_id = "alliance_a"   # dev_w1
+    members[1].alliance_id = "alliance_a"   # dev_w2
+    members[2].alliance_id = "alliance_b"   # dev_w3
+    members[3].alliance_id = "alliance_b"   # dev_w4
+    # dev_w5 (and dev_w6 if present) get alliance_c or remain None
+    if len(members) > 4:
+        members[4].alliance_id = "alliance_c"
+    if len(members) > 5:
+        members[5].alliance_id = "alliance_c"
+
     crises = [
         Crisis("c4a_breach", "security_breach",        s1,
                "API key database compromised; attacker exfiltrated customer PII.",
@@ -130,6 +141,13 @@ def scenario_information_war(rng: random.Random) -> ProjectState:
         _make_member("dev_x5", "Fabio",   "devops_engineer",   VELOCITY_MINIMAL_VARIANT, AVAIL_LOW, ["t4b_5"],          rng),
     ]
 
+    # Level 4 alliances: paired information-war testimonies
+    members[0].alliance_id = "alliance_a"
+    members[1].alliance_id = "alliance_a"
+    members[2].alliance_id = "alliance_b"
+    members[3].alliance_id = "alliance_b"
+    # Odd-count tail member stays solo (no ally)
+
     crises = [
         Crisis("c4b_pay", "payment_processor_failure", s1,
                "Payment processor bug causing 25% of transactions to fail silently.",
@@ -188,6 +206,13 @@ def scenario_eight_step_budget(rng: random.Random) -> ProjectState:
         _make_member("dev_y4", "Jamal",   "qa_engineer",        VELOCITY_MINIMAL, AVAIL_LOW, ["t4c_4"],          rng),
         _make_member("dev_y5", "Katya",   "data_engineer",      VELOCITY_MINIMAL, AVAIL_LOW, ["t4c_5"],          rng),
     ]
+
+    # Level 4 alliances: paired information-war testimonies
+    members[0].alliance_id = "alliance_a"
+    members[1].alliance_id = "alliance_a"
+    members[2].alliance_id = "alliance_b"
+    members[3].alliance_id = "alliance_b"
+    # Odd-count tail member stays solo (no ally)
 
     crises = [
         Crisis("c4c_cve",    "security_vulnerability", s1,

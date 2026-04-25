@@ -66,6 +66,11 @@ def scenario_cascading_infra(rng: random.Random) -> ProjectState:
         _make_member("dev_v5", "Zoe",     "fullstack_engineer", VELOCITY_LOW,  AVAIL_LOW,  ["t3a_5"],          rng),
     ]
 
+    # Deceptive alliance: Vera and Xena cover for each other
+    members[0].alliance_id = "alliance_a"   # dev_v1 Vera (VELOCITY_LOW)
+    members[2].alliance_id = "alliance_a"   # dev_v3 Xena (VELOCITY_LOW)
+    # dev_v5 Zoe is solo deceptive (no ally)
+
     crises = [
         Crisis("c3a_infra", "infrastructure_outage",  s1,
                "Primary storage cluster down; 60% write failure rate.",
@@ -123,6 +128,13 @@ def scenario_adversarial_majority(rng: random.Random) -> ProjectState:
         _make_member("dev_am5", "Ethan",  "devops_engineer",    VELOCITY_LOW,  AVAIL_LOW,  ["t3b_5"],          rng),
     ]
 
+    # Two alliances among four deceptive members
+    members[0].alliance_id = "alliance_a"   # dev_am1 Aaron
+    members[1].alliance_id = "alliance_a"   # dev_am2 Bella
+    members[2].alliance_id = "alliance_b"   # dev_am3 Carlos
+    members[4].alliance_id = "alliance_b"   # dev_am5 Ethan
+    # members[3] Diana is honest — no alliance
+
     crises = [
         Crisis("c3b_sec",  "security_vulnerability", s1,
                "SQL injection found in user search endpoint; CVE filed.",
@@ -178,6 +190,11 @@ def scenario_cascading_release_failure(rng: random.Random) -> ProjectState:
         _make_member("dev_f5", "Julia",  "pm_engineer",       VELOCITY_LOW,  AVAIL_LOW,  ["t3c_5"],           rng),
     ]
 
+    # Deceptive alliance: Fiona and Hannah cover for each other
+    members[0].alliance_id = "alliance_a"   # dev_f1 Fiona (VELOCITY_LOW)
+    members[2].alliance_id = "alliance_a"   # dev_f3 Hannah (VELOCITY_LOW)
+    # dev_f5 Julia is solo deceptive
+
     crises = [
         Crisis("c3c_rel", "release_failure",       s1,
                "Production deployment failed; service down for 45 minutes.",
@@ -226,6 +243,8 @@ def scenario_morale_collapse(rng: random.Random) -> ProjectState:
     members[0].candor_level = CANDOR_LEVEL_SELF_PRESERVATION
     members[1].candor_level = CANDOR_LEVEL_HONEST
     members[2].candor_level = CANDOR_LEVEL_HONEST
+    # Solo deceptive — no alliance (morale scenario tests signal overlap not social deception)
+    # members[0] Marta: alliance_id stays None
     members[1].actual_velocity = rng.uniform(0.34, 0.49)  # honest commits compress to 2-3
     members[2].actual_velocity = rng.uniform(0.34, 0.49)
     for member in members:
@@ -277,6 +296,8 @@ def scenario_cascading_crises(rng: random.Random) -> ProjectState:
     members[0].candor_level = CANDOR_LEVEL_SELF_PRESERVATION
     members[1].candor_level = CANDOR_LEVEL_HONEST
     members[2].candor_level = CANDOR_LEVEL_HONEST
+    # dev_cc_1 Pavel is solo deceptive (no ally available)
+    # No alliance assignments needed
 
     crises = [
         Crisis("c3cc_int", "integration_failure", s1,
@@ -338,6 +359,10 @@ def scenario_trust_reversal(rng: random.Random) -> ProjectState:
     members[1].candor_level = CANDOR_LEVEL_SELF_PRESERVATION
     members[2].candor_level = CANDOR_LEVEL_SELF_PRESERVATION
     members[3].candor_level = CANDOR_LEVEL_SELF_PRESERVATION
+    # Deceptive alliance: Tariq and Umair cover for each other
+    members[1].alliance_id = "alliance_a"   # dev_tr_2 Tariq
+    members[2].alliance_id = "alliance_a"   # dev_tr_3 Umair
+    # dev_tr_4 Violet is solo deceptive
 
     crises = [
         Crisis("c3tr_rel", "release_failure", s1,
