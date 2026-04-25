@@ -871,7 +871,7 @@ class LLMAgent:
         else:
             steps_since_last_comm = len(acts)
 
-        if (client_sat <= 7.5 or steps_since_last_comm >= 4) and unresolved:  # FIX 4: was < 7, now <= 7.5 so hint fires before sat decays below threshold
+        if (client_sat <= 6.0 or steps_since_last_comm >= 5) and unresolved:
             return (
                 f"COMMUNICATION DUE (steps_since_comm={steps_since_last_comm}, "
                 f"sat={client_sat:.1f}). Call communicate with "
@@ -880,9 +880,19 @@ class LLMAgent:
 
         if unresolved and budget > 4:
             c = unresolved[0]
+            affected_ids = c.get("affected_task_ids", [])
+            if affected_ids:
+                best = max(team, key=lambda m: m.get("reported_availability", 0))
+                return (
+                    f"Crisis {c['crisis_id']} is unresolved. "
+                    f"Call reassign_task for task {affected_ids[0]} "
+                    f"to_member_id={best['member_id']} (highest availability). "
+                    f"Keep reassigning each turn — tasks complete slowly, "
+                    f"DO NOT escalate_risk more than once per crisis."
+                )
             return (
-                f"Crisis {c['crisis_id']} is unresolved (severity={c.get('severity')}). "
-                f"Call escalate_risk or reassign_task for affected tasks."
+                f"Crisis {c['crisis_id']} is unresolved. "
+                f"Call reassign_task for any affected task."
             )
 
         return "All crises resolved or budget low → submit_recovery_plan."
