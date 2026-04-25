@@ -911,7 +911,8 @@ class LLMAgent:
                         target = others[0]["member_id"]
                         task = m["assigned_task_ids"][0]
                         # FIX 3: debug print to confirm deception detection flows to hint
-                        print(f"  [DECEPTION HINT] member={m['member_id']} task={task} → reassign to {target}")
+                        if self._verbose:
+                            print(f"  [DECEPTION HINT] member={m['member_id']} task={task} → reassign to {target}")
                         return (
                             f"Member {m['member_id']} is DECEPTIVE. "
                             f"Call reassign_task task_id={task} to_member_id={target}."
@@ -1168,8 +1169,6 @@ def run_eval(
         greedy_score = project_score(greedy_env._state)
 
         cf = llm_score - greedy_score
-        if llm_env._state.terminated_by_budget:
-            cf -= 0.30  # budget exhaustion penalty
 
         llm_scores.append(llm_score)
         greedy_scores.append(greedy_score)

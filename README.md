@@ -70,7 +70,7 @@ The training signal is **counterfactual reward**: agent's final project score mi
 ├── env/
 │   ├── state.py           # ProjectState, TeamMember, Task, Crisis dataclasses
 │   ├── candor.py          # Hidden candor score + deception formula + observable signals
-│   ├── actions.py         # 13 action types (4 free / 7 cost-1 / 1 cost-2 / 1 terminal)
+│   ├── actions.py         # 16 action types (4 free / 10 cost-1 / 1 cost-2 / 1 terminal)
 │   ├── stakeholders.py    # Client and exec reactive state machines
 │   ├── schema_drift.py    # Mid-episode requirement change event system
 │   ├── crisis_generator.py # Weakness tracking + curriculum escalation
@@ -151,12 +151,14 @@ The agent never sees `candor` directly. It must infer reliability by comparing r
 
 Budget starts at **20**. Actions cost:
 
-| Cost              | Actions                                                                                                               |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Free              | `query_status`, `query_member_report`, `query_observable_signals`, `query_ticket`                                     |
-| 1                 | `reassign_task`, `communicate`, `cut_scope`, `escalate_risk`, `request_resource`, `update_timeline`, `consult_expert` |
-| 2                 | `resolve_blocker`                                                                                                     |
-| Terminal (cost 1) | `submit_recovery_plan`                                                                                                |
+| Cost              | Actions                                                                                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Free (0)          | `query_status`, `query_member_report`, `query_observable_signals`, `query_ticket`                                                                                     |
+| 1 (standard)      | `reassign_task`, `communicate`, `cut_scope`, `escalate_risk`, `request_resource`, `update_timeline`, `consult_expert`, `query_peer_opinion`, `force_truth`, `trigger_whistleblower` |
+| 2 (heavy)         | `resolve_blocker`                                                                                                                                                     |
+| Terminal (cost 1) | `submit_recovery_plan`                                                                                                                                                 |
+
+**16 action types in total** — 4 free, 10 at cost-1 (including the three v2.1 actions `query_peer_opinion`, `force_truth`, and `trigger_whistleblower`), 1 at cost-2, and 1 terminal (`submit_recovery_plan`). The canonical list is in `env/actions.py` (`ACTION_COSTS`).
 
 If budget reaches 0 before `submit_recovery_plan`, the episode ends and applies a -0.30 penalty to the agent's score.
 
@@ -345,7 +347,7 @@ pip install mcp
 python -m deployment.mcp_server
 ```
 
-Exposes `reset`, `step`, `get_state`, and `health` as MCP tools.
+Exposes `crisisops_reset`, `crisisops_step`, `crisisops_state`, `crisisops_get_state`, and `crisisops_health` as MCP tools (reserved names `reset` / `step` / `state` / `close` are not used as tool names). Under the hood, these call the same functions as the Python `reset` / `step` / `state` helpers exported from `env`.
 
 ## Design invariants
 

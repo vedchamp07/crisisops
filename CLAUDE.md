@@ -1,282 +1,305 @@
-# CrisisOps v2 — Training Debug: Exact Fixes Only
+# CrisisOps v2 — Start Full Training Run
 
-**Copilot already spent many tokens finding the working dependency combination. Do not re-investigate dependencies. The working stack is already installed in `.venv`. Your job is to apply 7 precise code fixes to `training/grpo_trainer.py`, then execute the debug run and report results.**
+## What you already know
 
----
-
-## Context: what Copilot found
-
-Working dependency stack (already installed in `.venv`):
-- `trl==0.19.1` (has both `GRPOTrainer` and `ConstantLengthDataset`)
-- `unsloth==2024.x` (the version that was pre-installed)
-- `transformers==4.56.2`
-- GPU: RTX 3050 6GB, CUDA available
-
-Four crashes hit in order, all in `training/grpo_trainer.py`:
-1. `KeyError: 'torch_dtype'` on model load
-2. `past_key_values is None` in Unsloth's fast generation path
-3. Prompt too long: system prompt (~1617 tokens) + observation + 256 generation > 2048 limit
-4. Fix A and Fix B from the previous prompt were **never actually applied** to the real file (Copilot's patches went to a temp session)
+- 22/22 implementation checks pass on this codebase
+- `unsloth_compiled_cache/UnslothGRPOTrainer.py` exists — Unsloth already compiled its GRPO trainer on this machine in a previous debug run. Model loading works.
+- Working dep stack (already installed in `.venv`): `trl==0.19.1`, `transformers==4.56.2`, Unsloth with CUDA
+- All trainer fixes are in place: `max_seq_length=4096`, `use_cache=False`, HF Dataset conversion, GRPOConfig compat, compact JSON, FIX comments stripped from system prompt (~1410 tokens)
+- GPU: RTX 3050 6GB
 
 ---
 
-## Verify installed stack first (one command, no iteration)
+## Step 0 — Check the debug run from the previous session
+
+First, check if the previous debug run (30 episodes) produced output:
 
 ```bash
-cd /path/to/crisisops
-.venv/bin/python -c "
-import unsloth, trl, transformers, torch
-from trl import GRPOTrainer, GRPOConfig
-print(f'unsloth: OK | trl: {trl.__version__} | transformers: {transformers.__version__}')
-print(f'torch: {torch.__version__} | CUDA: {torch.cuda.is_available()}')
-"
-```
-
-If this passes, go straight to the fixes. If unsloth fails to import, run:
-```bash
-.venv/bin/pip install "trl==0.19.1" "transformers==4.56.2" --quiet
-```
-Then re-verify. Do not change unsloth version.
-
----
-
-## THE 7 FIXES — apply all to `training/grpo_trainer.py` in one editing pass
-
-Read the full file first. Then apply every fix below. Do not apply them one at a time.
-
-### Fix 1 — max_seq_length: 2048 → 4096
-
-Find the `FastLanguageModel.from_pretrained(` call. Change `max_seq_length=2048` to `max_seq_length=4096`.
-
-Qwen2.5-1.5B supports 131k context natively. At 4096, the model fits prompt + observation + 256 generation tokens comfortably. This is the primary cause of the generation hang.
-
-### Fix 2 — torch_dtype KeyError on model load
-
-Directly after `FastLanguageModel.from_pretrained(...)` returns `model, tokenizer`, add:
-
-```python
-    # Ensure torch_dtype is set — some Unsloth builds fail without it
-    if not hasattr(model.config, 'torch_dtype') or model.config.torch_dtype is None:
-        import torch as _torch
-        model.config.torch_dtype = _torch.float16
-```
-
-### Fix 3 — Disable KV cache to fix past_key_values=None crash
-
-Directly after Fix 2, add:
-
-```python
-    # Disable KV cache — required for GRPO training mode.
-    # Unsloth's fast_forward_inference path crashes when GRPOTrainer
-    # calls generate() without a pre-seeded past_key_values.
-    model.config.use_cache = False
-    if hasattr(model, 'generation_config') and model.generation_config is not None:
-        model.generation_config.use_cache = False
-```
-
-### Fix 4 — Do NOT call FastLanguageModel.for_inference()
-
-Search for any call to `FastLanguageModel.for_inference(model)` in the `train()` function. If it exists, remove it entirely. GRPOTrainer requires the model in training mode. Calling `for_inference()` before training triggers the Unsloth cache crash.
-
-Note: `for_inference()` is correct for the evaluation cell in the notebook — do not touch the notebook.
-
-### Fix 5 — Compact JSON observations (token savings ~170 tokens per call)
-
-Find the function `format_observation_as_prompt`. It currently does `json.dumps(obs, indent=2)`. Change to:
-
-```python
-def format_observation_as_prompt(obs: Dict[str, Any]) -> str:
-    return json.dumps(obs, separators=(',', ':'))
-```
-
-This saves ~170 tokens per forward pass. Combined with Fix 1 (4096 context), every level including level 3/4 scenarios now fits.
-
-### Fix 6 — Strip wasted tokens from SYSTEM_PROMPT
-
-The `SYSTEM_PROMPT` string contains 24 inline developer comments like `# FIX-2: synced from llm_agent.py` and `# FIX-5: synced from llm_agent.py`. The model processes these as tokens on every forward pass — 332 wasted tokens.
-
-Find the `SYSTEM_PROMPT = """..."""` block. Inside the string, remove every occurrence of text matching the pattern `  # FIX-\d+:.*` (two spaces + `# FIX-N: ...` to end of line). Also remove `  # CHG-\d+:.*` if any appear in the string.
-
-Do this with a regex or by manually deleting all such comment suffixes from the lines inside the triple-quoted string. The surrounding Python code is unaffected.
-
-After removal, the system prompt should be ~1285 tokens instead of ~1617.
-
-### Fix 7A — Convert dataset to HF Dataset
-
-Find the block in `train()` that calls `build_training_dataset(...)` and assigns `full_dataset`. Replace it with:
-
-```python
-    full_dataset_list = build_training_dataset(
-        scenario_fn_or_generator=generator,
-        curriculum_level=current_level,
-        n_samples=num_episodes,
-        seed=seed,
-    )
-    try:
-        from datasets import Dataset as HFDataset
-        full_dataset = HFDataset.from_list(full_dataset_list)
-    except ImportError:
-        full_dataset = full_dataset_list
-        print("[WARN] datasets not installed — episode_seed not forwarded to reward_fn")
-```
-
-### Fix 7B — GRPOConfig version-safe construction
-
-Find the `config = GRPOConfig(...)` block in `train()`. Replace the entire block with:
-
-```python
-    import inspect as _inspect
-    _grpo_sig = set(_inspect.signature(GRPOConfig.__init__).parameters.keys())
-
-    _grpo_kwargs: Dict[str, Any] = {
-        "output_dir": output_dir,
-        "num_train_epochs": 1,
-        "per_device_train_batch_size": GRPO_BATCH_SIZE,
-        "num_generations": GRPO_NUM_GENERATIONS,
-        "learning_rate": GRPO_LEARNING_RATE,
-        "logging_steps": GRPO_LOGGING_STEPS,
-        "save_steps": 50,
-        "seed": seed,
-        "report_to": "none",
-    }
-    # max_new_tokens vs max_completion_length (renamed in some TRL versions)
-    if "max_new_tokens" in _grpo_sig:
-        _grpo_kwargs["max_new_tokens"] = GRPO_MAX_NEW_TOKENS
-    elif "max_completion_length" in _grpo_sig:
-        _grpo_kwargs["max_completion_length"] = GRPO_MAX_NEW_TOKENS
-    # temperature (removed in some versions)
-    if "temperature" in _grpo_sig:
-        _grpo_kwargs["temperature"] = GRPO_TEMPERATURE
-    # mini batch size (renamed across versions)
-    if "per_device_mini_train_batch_size" in _grpo_sig:
-        _grpo_kwargs["per_device_mini_train_batch_size"] = GRPO_MINI_BATCH_SIZE
-    elif "mini_batch_size" in _grpo_sig:
-        _grpo_kwargs["mini_batch_size"] = GRPO_MINI_BATCH_SIZE
-
-    config = GRPOConfig(**_grpo_kwargs)
-```
-
----
-
-## Compile check (must pass before running)
-
-```bash
-.venv/bin/python -m py_compile training/grpo_trainer.py && echo "COMPILE OK"
-```
-
-If it fails, fix the syntax error before proceeding.
-
----
-
-## Sanity check (no GPU needed, ~10 seconds)
-
-```bash
-cd /path/to/crisisops
-TOKENIZERS_PARALLELISM=false .venv/bin/python - <<'EOF'
-from training.grpo_trainer import build_training_dataset, parse_action_from_response, format_observation_as_prompt
-from env.crisis_generator import CrisisGenerator
-from datasets import Dataset
+ls -la outputs/ 2>/dev/null && \
+ls -la outputs/debug_run/ 2>/dev/null && \
+[ -f outputs/debug_run/reward_log.json ] && python -c "
 import json
-
-g = CrisisGenerator(curriculum_level=1)
-ds = Dataset.from_list(build_training_dataset(g, 1, n_samples=3, seed=0))
-assert 'episode_seed' in ds.column_names, "episode_seed missing from dataset columns"
-assert ds[0]['prompt'][0]['role'] == 'system'
-
-obs = json.loads(ds[0]['prompt'][1]['content'])
-# Verify compact JSON (no indent spaces)
-compact = format_observation_as_prompt(obs)
-assert '\n' not in compact, "format_observation_as_prompt must return compact JSON (no newlines)"
-
-from training.grpo_trainer import SYSTEM_PROMPT
-assert '# FIX-' not in SYSTEM_PROMPT, "FIX comments still in SYSTEM_PROMPT"
-sp_tokens = len(SYSTEM_PROMPT) // 4
-print(f"System prompt: ~{sp_tokens} tokens (must be < 1450)")
-assert sp_tokens < 1450, f"System prompt still too long: {sp_tokens} tokens"
-
-action = parse_action_from_response('{"action_type": "query_status", "params": {}}')
-assert action['action_type'] == 'query_status'
-
-print("ALL SANITY CHECKS PASSED")
-EOF
+with open('outputs/debug_run/reward_log.json') as f: d = json.load(f)
+print(f'Debug run episodes: {len(d)}')
+rewards = [r[\"reward\"] for r in d]
+print(f'Rewards: {rewards}')
+print(f'All same: {len(set(round(r,3) for r in rewards))==1}')
+" || echo "No debug_run/reward_log.json found"
 ```
 
-Fix any failure. Do not proceed past a failing sanity check.
+**Interpret the result:**
+- If `reward_log.json` exists with varying rewards → debug run worked. Skip to Step 2.
+- If file doesn't exist → debug run crashed before finishing. Check `debug_run.log` if it exists: `tail -30 debug_run.log 2>/dev/null`
+- If all rewards are exactly `-0.300` → model never learned to submit, see fix below
 
 ---
 
-## Debug run (30 episodes, ~15-20 min on RTX 3050)
+## Step 1 — Quick smoke test (2 episodes, confirms pipeline works end-to-end)
+
+Run this before the full training:
 
 ```bash
-cd /path/to/crisisops
 TOKENIZERS_PARALLELISM=false .venv/bin/python -c "
 from training.grpo_trainer import train
-train(curriculum_level=1, num_episodes=30, output_dir='./outputs/debug_run', seed=42)
-print('DEBUG COMPLETE')
-" 2>&1 | tee debug_run.log
+train(curriculum_level=1, num_episodes=2, output_dir='./outputs/smoke', seed=0)
+print('SMOKE OK')
+" 2>&1 | tee smoke.log
 ```
 
-**Watch the first 3 minutes of output for:**
-- `Unsloth: ...` loading message — good
-- `Training log:` lines — good, training is running
-- `KeyError: torch_dtype` — Fix 2 didn't apply
-- `past_key_values is None` — Fix 3 didn't apply
-- `Input length exceeds` or truncation warnings — Fix 1 didn't apply or Fix 6 didn't trim enough
+**Watch for these specific lines in the first 2 minutes:**
+- `Unsloth: ...` — model loading (normal, takes ~60s)
+- `Training log:` or a reward value printed — training actually ran
+- Any traceback — fix it before full run
 
-**If OOM (out of memory):**
-Set `GRPO_BATCH_SIZE = 2` and `GRPO_NUM_GENERATIONS = 2` at the top of `grpo_trainer.py` and retry.
+**If you see `past_key_values is None`:** The `use_cache=False` fix didn't stick. Open `training/grpo_trainer.py`, find the model load block, and confirm these two lines are there immediately after `FastLanguageModel.from_pretrained(...)`:
+```python
+model.config.use_cache = False
+if hasattr(model, 'generation_config') and model.generation_config is not None:
+    model.generation_config.use_cache = False
+```
+
+**If you see `Input length X exceeds max_length`:** The 4096 fix didn't stick. Confirm `max_seq_length=4096` in the `FastLanguageModel.from_pretrained(` call.
+
+**If you see CUDA OOM:** Reduce at top of `training/grpo_trainer.py`:
+```python
+GRPO_BATCH_SIZE      = 2  # was 4
+GRPO_NUM_GENERATIONS = 2  # was 4
+```
+Then retry.
 
 ---
 
-## After debug run — report these exact outputs
+## Step 2 — Start the full training run in tmux
+
+Once smoke test passes (or if debug run already produced valid output), start full training:
 
 ```bash
-# Run this after the debug run finishes (or fails):
-python - <<'EOF'
-import json, os, sys
+# Create tmux session
+tmux new-session -d -s crisisops \
+  "cd $(pwd) && TOKENIZERS_PARALLELISM=false .venv/bin/python -c \
+  'from training.grpo_trainer import train; train(curriculum_level=1, num_episodes=300, output_dir=\"./outputs/full_run\", seed=42)' \
+  2>&1 | tee full_run.log; echo TRAINING_DONE >> full_run.log"
 
-print("=== DEBUG RUN REPORT ===")
+echo "Training running in tmux session 'crisisops'"
+echo "Attach: tmux attach -t crisisops"
+echo "Detach: Ctrl+B then D"
+```
 
-log_path = './outputs/debug_run/reward_log.json'
-if os.path.exists(log_path):
-    with open(log_path) as f:
-        data = json.load(f)
-    rewards = [r['reward'] for r in data]
-    print(f"Episodes logged: {len(data)}")
-    if rewards:
+While it runs, open a second terminal and monitor:
+
+```bash
+# Monitor reward log as it builds (check every few minutes)
+watch -n 30 'python -c "
+import json, os
+p = \"./outputs/full_run/reward_log.json\"
+if os.path.exists(p):
+    d = json.load(open(p))
+    r = [x[\"reward\"] for x in d]
+    if r:
         import statistics
-        print(f"Mean reward: {statistics.mean(rewards):.4f}")
-        print(f"Min/Max: {min(rewards):.4f} / {max(rewards):.4f}")
-        print(f"All same value: {len(set(round(r,3) for r in rewards)) == 1}")
+        print(f\"Episodes: {len(r)}\")
+        print(f\"Last 10 mean: {statistics.mean(r[-10:]):.4f}\")
+        print(f\"Max so far: {max(r):.4f}\")
+        print(f\"Levels: {sorted(set(x[\"level\"] for x in d))}\")
 else:
-    print("reward_log.json NOT FOUND — training did not complete")
+    print(\"No reward_log.json yet\")
+"'
+```
 
+---
+
+## Step 3 — Capture results after training
+
+When training finishes (or after at least 100 episodes), run the full results report:
+
+```bash
+.venv/bin/python - << 'EOF'
+import json, os
+import numpy as np
+
+OUTPUT_DIR = './outputs/full_run'
+log_path = os.path.join(OUTPUT_DIR, 'reward_log.json')
+
+if not os.path.exists(log_path):
+    print("ERROR: reward_log.json not found")
+    exit(1)
+
+with open(log_path) as f:
+    log = json.load(f)
+
+rewards = [r['reward'] for r in log]
+levels  = [r['level']  for r in log]
+n = len(rewards)
+
+print("=== TRAINING RESULTS ===")
+print(f"Episodes logged:     {n}")
+print(f"Curriculum levels:   {sorted(set(levels))}")
 print()
-if os.path.exists('debug_run.log'):
-    with open('debug_run.log') as f:
-        lines = f.readlines()
-    print(f"Log lines: {len(lines)}")
-    print("Last 25 lines:")
-    print("".join(lines[-25:]))
+print(f"Mean (all):          {np.mean(rewards):.4f}")
+print(f"Mean (first 25%):    {np.mean(rewards[:n//4]):.4f}")
+print(f"Mean (last 25%):     {np.mean(rewards[3*n//4:]):.4f}")
+print(f"Max reward:          {max(rewards):.4f}")
+print(f"Min reward:          {min(rewards):.4f}")
+print(f"Std dev:             {np.std(rewards):.4f}")
+print()
+first_half = np.mean(rewards[:n//2])
+second_half = np.mean(rewards[n//2:])
+print(f"First half mean:     {first_half:.4f}")
+print(f"Second half mean:    {second_half:.4f}")
+print(f"Trend:               {'IMPROVING' if second_half > first_half else 'FLAT/DECLINING'}")
+print()
+positive = sum(1 for r in rewards if r > 0)
+print(f"Positive CF reward:  {positive}/{n} ({100*positive/n:.1f}%)")
+print()
+import os
+checkpoints = sorted([d for d in os.listdir(OUTPUT_DIR) if d.startswith('checkpoint_ep')])
+print(f"Checkpoints saved:   {checkpoints}")
+print()
+print("=== LAST 20 LINES OF LOG ===")
+if os.path.exists('full_run.log'):
+    lines = open('full_run.log').readlines()
+    print(''.join(lines[-20:]))
 EOF
 ```
 
-Paste the full output of this report back.
-
 ---
 
-## If debug run succeeds, immediately start full run
+## Step 4 — Generate final plots
+
 ```bash
-tmux new-session -d -s crisisops_train \
-  "cd /path/to/crisisops && TOKENIZERS_PARALLELISM=false .venv/bin/python -c \
-  'from training.grpo_trainer import train; train(curriculum_level=1, num_episodes=300, output_dir=\"./outputs/full_run\", seed=42)' \
-  2>&1 | tee full_run.log"
-echo "Training running in tmux session 'crisisops_train'"
-echo "Monitor: tmux attach -t crisisops_train"
+.venv/bin/python - << 'EOF'
+import json, os, shutil
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.ndimage import gaussian_filter1d
+
+OUTPUT_DIR = './outputs/full_run'
+with open(os.path.join(OUTPUT_DIR, 'reward_log.json')) as f:
+    log = json.load(f)
+
+episodes = [r['episode'] for r in log]
+rewards  = [r['reward']  for r in log]
+levels   = [r['level']   for r in log]
+n = len(rewards)
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+# Plot 1: Reward curve
+ax = axes[0]
+ax.plot(episodes, rewards, alpha=0.2, color='#2563eb', linewidth=0.8, label='Raw reward')
+if n > 5:
+    sm = gaussian_filter1d(rewards, sigma=max(1, n//30))
+    ax.plot(episodes, sm, color='#1d4ed8', linewidth=2.2, label='Smoothed')
+ax.axhline(0, color='#dc2626', linestyle='--', linewidth=1.2, label='Greedy baseline (0)')
+ax.set_xlabel('Training episode', fontsize=11)
+ax.set_ylabel('Counterfactual reward (agent − greedy PM)', fontsize=11)
+ax.set_title('CrisisOps v2 — GRPO Training Curve', fontsize=12, fontweight='bold')
+ax.legend(fontsize=9); ax.grid(True, alpha=0.3)
+
+# Shade curriculum levels
+level_colors = {1:'#eff6ff', 2:'#ecfdf5', 3:'#fefce8', 4:'#fff1f2'}
+prev_ep, prev_lv = (episodes[0] if episodes else 0), (levels[0] if levels else 1)
+for ep, lv in zip(episodes, levels):
+    if lv != prev_lv:
+        ax.axvspan(prev_ep, ep, alpha=0.3, color=level_colors.get(prev_lv,'#f5f5f5'))
+        prev_ep, prev_lv = ep, lv
+if episodes:
+    ax.axvspan(prev_ep, episodes[-1], alpha=0.3, color=level_colors.get(prev_lv,'#f5f5f5'))
+
+# Plot 2: Distribution shift
+ax2 = axes[1]
+first_q = rewards[:n//4]
+last_q  = rewards[3*n//4:]
+ax2.hist(first_q, bins=15, alpha=0.6, color='#dc2626',
+         label=f'First 25% (mean={np.mean(first_q):.3f})')
+ax2.hist(last_q,  bins=15, alpha=0.6, color='#2563eb',
+         label=f'Last 25% (mean={np.mean(last_q):.3f})')
+ax2.axvline(0, color='black', linestyle='--', linewidth=1.0, label='Greedy baseline')
+ax2.set_xlabel('Counterfactual reward', fontsize=11)
+ax2.set_ylabel('Episode count', fontsize=11)
+ax2.set_title('Reward Distribution: Early vs Late Training', fontsize=12, fontweight='bold')
+ax2.legend(fontsize=9); ax2.grid(True, alpha=0.3)
+
+plt.tight_layout()
+out = os.path.join(OUTPUT_DIR, 'training_curve_final.png')
+plt.savefig(out, dpi=150, bbox_inches='tight')
+print(f'Saved: {out}')
+
+os.makedirs('plots', exist_ok=True)
+shutil.copy(out, 'plots/reward_curve.png')
+print('Copied to plots/reward_curve.png')
+print('Commit with: git add plots/reward_curve.png && git commit -m "feat: training results"')
+EOF
 ```
 
 ---
 
-## Do not investigate beyond these fixes
+## Step 5 — What to paste back for diagnosis
 
-The dependency stack is solved. The 7 fixes above cover every confirmed crash. If a new error appears that is not covered above, paste it back — do not attempt further dependency changes.
+After training (or after 50+ episodes if it's slow), paste back the **complete output of Step 3** plus:
+
+```bash
+# Also paste these two lines:
+tail -5 full_run.log
+ls -lh outputs/full_run/
+```
+
+---
+
+## Failure modes and exact fixes
+
+**All rewards exactly `-0.300` every episode:**
+Model always exhausts budget without submitting. Print a raw completion to see what it outputs:
+```python
+# Add temporarily to reward_fn in grpo_trainer.py, first episode only:
+if i == 0:
+    print(f"[DEBUG] completion: {completion[:200]}")
+```
+If output is all freeform text (not JSON), the model isn't following the format. Fix: reduce `GRPO_TEMPERATURE` from 0.9 to 0.6 in `grpo_trainer.py`.
+
+**All rewards exactly `0.000`:**
+`_compute_reward` isn't running. Check that `env.reset(seed=ep_seed)` doesn't fail silently. Add `print(f"[DEBUG] reward_val={reward_val}")` after the while loop.
+
+**Training stalls after episode 10 with no new log lines:**
+The inner model.generate() call is hanging on a very long prompt. Check if any observation is > 3000 chars:
+```python
+import json
+obs_str = format_observation_as_prompt(obs)
+print(f"[DEBUG] obs chars: {len(obs_str)}")
+```
+If > 3000: use level 1 scenarios only (`from scenarios.level1 import get_random_level1_scenario`) and set `curriculum_level=1` for the full run.
+
+**CUDA OOM mid-training:**
+```python
+GRPO_BATCH_SIZE      = 2
+GRPO_NUM_GENERATIONS = 2
+```
+Restart training. Checkpoint from last save will not be auto-resumed — the curve will restart from 0 but the model weights are partially trained.
+
+**Reward improves then collapses around episode 80-100:**
+This is reward hacking — model learned to always submit immediately. Check if `submit_recovery_plan` frequency rises in action distribution. If yes, add to system prompt: "Never submit before at least 3 cross-verify actions."
+
+---
+
+## Interpreting results
+
+| Pattern | Meaning | Action |
+|---|---|---|
+| Mean moves from -0.34 toward -0.10 over 300 eps | Learning is happening, curve is gradual | Normal for 1.5B — good result |
+| Mean crosses 0 by episode 150+ | Model beat greedy PM baseline | Excellent — screenshot this |
+| Flat at -0.30 entire run | Budget exhaustion every ep | Print raw completions, reduce temperature |
+| Spiky with no trend | Training signal is too noisy | Increase `CURRICULUM_WINDOW` from 10 to 20 |
+| Improves then collapses | Reward hacking | Strengthen system prompt with explicit anti-hack rules |
+
+---
+
+## After a successful run — commit everything
+
+```bash
+git add plots/reward_curve.png outputs/full_run/reward_log.json
+git commit -m "feat: 300-episode GRPO training results"
+git push origin main
+git push hf main --force
+```
