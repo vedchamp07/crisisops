@@ -5,6 +5,9 @@
 # Without this pin, pip pulls a current hub and the Space fails at "import gradio".
 huggingface_hub>=0.19.0,<0.20.0
 
+# Jinja2 3.1+ breaks Gradio 4.44 + Starlette (TemplateResponse cache: unhashable dict).
+Jinja2>=3.0.3,<3.1.0
+
 gradio==4.44.0
 numpy>=1.26.0
 openai>=1.0.0
