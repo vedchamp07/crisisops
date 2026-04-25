@@ -1,14 +1,12 @@
 # Requirements for HF Spaces (demo/environment only)
 # For local training, see requirements_train.txt
 #
-# Gradio 4.44 (oauth) imports HfFolder from huggingface_hub; it was removed in 0.20+.
-# Without this pin, pip pulls a current hub and the Space fails at "import gradio".
-huggingface_hub>=0.19.0,<0.20.0
+# Gradio 5.50+ works with current huggingface_hub (no legacy HfFolder / oauth).
+# Gradio 4.44 on Spaces was failing with Jinja2/Starlette template cache errors;
+# 5.50+ fixes the UI stack. Do not pin Jinja2 here — use Gradio’s dependencies.
 
-# Jinja2 3.1+ breaks Gradio 4.44 + Starlette (TemplateResponse cache: unhashable dict).
-Jinja2>=3.0.3,<3.1.0
-
-gradio==4.44.0
+gradio==5.50.0
+huggingface_hub>=0.25.0
 numpy>=1.26.0
 openai>=1.0.0
 fastapi>=0.110.0

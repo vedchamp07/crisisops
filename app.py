@@ -11,8 +11,9 @@ import json
 import sys
 import os
 
-# Hugging Face Spaces / Docker: must be set before importing Gradio so the
-# server binds correctly and the localhost probe does not abort launch.
+# Hugging Face Spaces / Docker: bind all interfaces. Gradio also probes this
+# URL after startup; if the UI stack errors (5xx), the probe can fail and
+# launch() raises unless the Gradio/huggingface stack is compatible (e.g. 5.50+).
 os.environ.setdefault("GRADIO_SERVER_NAME", "0.0.0.0")
 
 # Ensure the package root is on the path when run from HF Spaces
@@ -236,6 +237,7 @@ self-reports to identify liars and recover the project.
 demo.launch(
     server_name="0.0.0.0",
     server_port=int(os.environ.get("PORT", 7860)),
+    inbrowser=False,
     share=False,
     show_error=True,
 )
