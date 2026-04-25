@@ -11,11 +11,11 @@ The training signal is **counterfactual reward**: agent's final project score mi
 ## Directory structure
 
 ```
-crisisops/
+./
 ├── env/
 │   ├── state.py           # ProjectState, TeamMember, Task, Crisis dataclasses
 │   ├── candor.py          # Hidden candor score + deception formula + observable signals
-│   ├── actions.py         # 12 actions (4 free / 7 cost-1 / 1 cost-2 / 1 terminal)
+│   ├── actions.py         # 13 action types (4 free / 7 cost-1 / 1 cost-2 / 1 terminal)
 │   ├── stakeholders.py    # Client and exec reactive state machines
 │   ├── schema_drift.py    # Mid-episode requirement change event system
 │   ├── crisis_generator.py # Weakness tracking + curriculum escalation
@@ -33,7 +33,8 @@ crisisops/
 │   └── mcp_server.py      # FastMCP server (OpenEnv HTTP endpoint)
 ├── baselines/
 │   ├── random_agent.py    # Random agent for reward range sanity check
-│   └── llm_agent.py       # LLM-based agent eval (any provider)
+│   ├── llm_agent.py       # LLM-based agent eval (any provider)
+│   └── replay.py          # Narrative episode replay for demos
 ├── scenarios/
 │   ├── level1.py          # 3 templates: single crisis, one deceptive member
 │   ├── level2.py          # 3 templates: double crisis, two deceptive, schema drift
@@ -71,10 +72,10 @@ python -m baselines.llm_agent --episodes 5
 
 Each team member has a hidden `candor` float (0-1) sampled once per episode:
 
-| Level | Range | Behaviour |
-|---|---|---|
-| `honest` | 0.85-1.0 | Reports near-truth |
-| `optimism_bias` | 0.50-0.70 | Moderate inflation |
+| Level               | Range     | Behaviour            |
+| ------------------- | --------- | -------------------- |
+| `honest`            | 0.85-1.0  | Reports near-truth   |
+| `optimism_bias`     | 0.50-0.70 | Moderate inflation   |
 | `self_preservation` | 0.10-0.40 | Heavy over-reporting |
 
 **Deception formula:** `reported = actual + (1 - candor) * inflation_bias`
@@ -89,14 +90,14 @@ The agent never sees `candor` directly. It must infer reliability by comparing r
 
 Budget starts at **20**. Actions cost:
 
-| Cost | Actions |
-|---|---|
-| Free | `query_status`, `query_member_report`, `query_observable_signals`, `query_ticket` |
-| 1 | `reassign_task`, `communicate`, `cut_scope`, `escalate_risk`, `request_resource`, `update_timeline`, `consult_expert` |
-| 2 | `resolve_blocker` |
-| Terminal | `submit_recovery_plan` |
+| Cost              | Actions                                                                                                               |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Free              | `query_status`, `query_member_report`, `query_observable_signals`, `query_ticket`                                     |
+| 1                 | `reassign_task`, `communicate`, `cut_scope`, `escalate_risk`, `request_resource`, `update_timeline`, `consult_expert` |
+| 2                 | `resolve_blocker`                                                                                                     |
+| Terminal (cost 1) | `submit_recovery_plan`                                                                                                |
 
-Budget exhaustion before `submit_recovery_plan` applies a -0.30 penalty to the agent's score.
+If budget reaches 0 before `submit_recovery_plan`, the episode ends and applies a -0.30 penalty to the agent's score.
 
 ### Counterfactual reward
 
@@ -123,11 +124,11 @@ The agent has 3 steps to acknowledge via `update_timeline` or `communicate` or a
 ### Curriculum
 
 | Level | Crises | Deceptive members | Drift |
-|---|---|---|---|
-| 1 | 1 | 1 | No |
-| 2 | 2 | 2 | Yes |
-| 3 | 3 | Majority | Yes |
-| 4 | 4 | All (info war) | Yes |
+| ----- | ------ | ----------------- | ----- |
+| 1     | 1      | 1                 | No    |
+| 2     | 2      | 2                 | Yes   |
+| 3     | 3      | Majority          | Yes   |
+| 4     | 4      | All (info war)    | Yes   |
 
 Level unlocks: reward window mean > 0.15 -> L2, > 0.25 -> L3, > 0.35 -> L4.
 
@@ -137,18 +138,18 @@ Evaluate any LLM as the PM agent against the greedy baseline. No SDK required --
 
 ### Supported providers
 
-Set **one** environment variable to select your provider:
+Set **one** environment variable to select your provider. If multiple are set, the first match wins in this precedence order: `LLM_BASE_URL`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `TOGETHER_API_KEY`, `GROQ_API_KEY`, `OLLAMA_MODEL`.
 
-| Env var | Provider | Default model |
-|---|---|---|
-| `OPENAI_API_KEY` | OpenAI | `gpt-4o-mini` |
-| `ANTHROPIC_API_KEY` | Anthropic | `claude-sonnet-4-20250514` |
-| `GOOGLE_API_KEY` | Google Gemini | `gemini-2.0-flash` |
-| `GROQ_API_KEY` | Groq | `llama-3.1-70b-versatile` |
-| `TOGETHER_API_KEY` | Together AI | `meta-llama/Llama-3-70b-chat-hf` |
-| `OPENROUTER_API_KEY` | OpenRouter | `openrouter/auto` |
-| `OLLAMA_MODEL` | Local Ollama | `llama3.1` (no API key needed) |
-| `LLM_BASE_URL` + `LLM_API_KEY` | Any OpenAI-compatible | (specify with `--model`) |
+| Env var                        | Provider              | Default model                    |
+| ------------------------------ | --------------------- | -------------------------------- |
+| `OPENAI_API_KEY`               | OpenAI                | `gpt-4o-mini`                    |
+| `ANTHROPIC_API_KEY`            | Anthropic             | `claude-sonnet-4-20250514`       |
+| `GOOGLE_API_KEY`               | Google Gemini         | `gemini-2.0-flash`               |
+| `GROQ_API_KEY`                 | Groq                  | `llama-3.1-70b-versatile`        |
+| `TOGETHER_API_KEY`             | Together AI           | `meta-llama/Llama-3-70b-chat-hf` |
+| `OPENROUTER_API_KEY`           | OpenRouter            | `openrouter/auto`                |
+| `OLLAMA_MODEL`                 | Local Ollama          | `llama3.1` (no API key needed)   |
+| `LLM_BASE_URL` + `LLM_API_KEY` | Any OpenAI-compatible | (specify with `--model`)         |
 
 ### Running evaluations
 
@@ -188,31 +189,34 @@ python -m baselines.llm_agent --episodes 10 --seed 42 --temperature 0.5 --level 
 
 ### CLI options
 
-| Flag | Default | Description |
-|---|---|---|
-| `--episodes` | 5 | Number of evaluation episodes |
-| `--model` | Provider default | Model name override |
-| `--seed` | 2000 | Starting random seed |
-| `--level` | 1 | Curriculum level (1-4) |
-| `--temperature` | 0.3 | Sampling temperature |
-| `-v` / `--verbose` | off | Print raw LLM responses |
+| Flag               | Default          | Description                   |
+| ------------------ | ---------------- | ----------------------------- |
+| `--episodes`       | 5                | Number of evaluation episodes |
+| `--model`          | Provider default | Model name override           |
+| `--seed`           | 2000             | Starting random seed          |
+| `--level`          | 1                | Curriculum level (1-4)        |
+| `--temperature`    | 0.3              | Sampling temperature          |
+| `-v` / `--verbose` | off              | Print raw LLM responses       |
 
 ### Output
 
 Each episode reports:
+
 - **LLM score** -- the agent's `project_score` (0-1)
 - **Greedy score** -- baseline `project_score` on the same episode
 - **CF reward** -- counterfactual reward (positive = agent beat greedy)
 - **CVR** -- cross-verification rate (how often the agent checked signals vs reports)
 
 The summary compares the LLM against calibration targets:
-- Greedy PM target: 0.45-0.55
-- Oracle target: 0.70-0.80
+
+- Greedy PM target: 0.45–0.55
+- Oracle target: 0.70–0.80
 - An LLM scoring above 0.70 is performing at oracle level
 
 ### Interpreting results
 
 A good PM agent should:
+
 1. **Query observable signals** for each team member (high cross-verification rate)
 2. **Detect deceptive members** by comparing reported completion against ticket age and commit activity
 3. **Reassign tasks** from deceptive/stalled members to productive ones
@@ -229,11 +233,11 @@ python -m calibration.calibrate
 
 ### Targets
 
-| Agent | Score target |
-|---|---|
-| Greedy PM | 0.45-0.55 |
-| Oracle | 0.70-0.80 |
-| Gap | 0.20-0.35 |
+| Agent     | Score target |
+| --------- | ------------ |
+| Greedy PM | 0.45–0.55    |
+| Oracle    | 0.70–0.80    |
+| Gap       | 0.20–0.35    |
 
 If gap < 0.20: increase `inflation_bias` mean in `env/candor.py`.
 If gap > 0.35: reduce signal contradiction strength in `env/candor.py`.
@@ -249,15 +253,15 @@ GRPO training requires a GPU. Open `training/colab_notebook.ipynb` in Google Col
 
 ### Training config
 
-| Parameter | Value |
-|---|---|
-| Model | Qwen/Qwen2.5-1.5B-Instruct |
-| LoRA rank | 16 |
-| LoRA alpha | 32 |
-| Target modules | q_proj, v_proj |
-| Batch size | 4 |
-| Generations per prompt (G) | 4 |
-| Learning rate | 2e-5 |
+| Parameter                  | Value                      |
+| -------------------------- | -------------------------- |
+| Model                      | Qwen/Qwen2.5-1.5B-Instruct |
+| LoRA rank                  | 16                         |
+| LoRA alpha                 | 32                         |
+| Target modules             | q_proj, v_proj             |
+| Batch size                 | 4                          |
+| Generations per prompt (G) | 4                          |
+| Learning rate              | 2e-5                       |
 
 ## Deployment
 
