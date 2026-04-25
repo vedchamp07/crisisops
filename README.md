@@ -8,7 +8,7 @@ sdk_version: "4.44.0"
 app_file: app.py
 pinned: true
 license: mit
-short_description: Train LLMs to detect deceptive engineers during software crises
+short_description: PM RL env — catch deceptive devs in software crises
 ---
 
 # CrisisOps v2
