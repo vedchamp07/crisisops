@@ -80,7 +80,7 @@ What makes CrisisOps different from any existing environment isn't the premise a
 
 Designing the reward was the hardest part of this project. A naive reward like "did the project succeed?" is far too sparse and noisy. Most episodes succeed or fail for reasons outside the agent's control: initial crisis severity, scenario difficulty, random escalation. A reward that doesn't control for this teaches the agent to get lucky, not to get good.
 
-I use a **counterfactual reward**. At the end of each episode, we replay a greedy PM baseline on an exact clone of the starting state. The greedy agent trusts all self-reports uncritically, communicates on a fixed schedule, and takes the first available action at each step. The agent's reward is:
+We used a **counterfactual reward**. At the end of each episode, we replay a greedy PM baseline on an exact clone of the starting state. The greedy agent trusts all self-reports uncritically, communicates on a fixed schedule, and takes the first available action at each step. The agent's reward is:
 
 ```
 reward = project_score(agent_final_state) − project_score(greedy_PM_final_state)
@@ -191,4 +191,3 @@ Or open the [Colab notebook](https://colab.research.google.com/github/vedchamp07
 *Built for the OpenEnv Hackathon, April 2026 · Qwen2.5-1.5B + GRPO + HuggingFace TRL*
 
 **Live demo** · [huggingface.co/spaces/aryannzzz/crisisops](https://huggingface.co/spaces/aryannzzz/crisisops)  
-**Demo video** · *(add YouTube URL after recording)*
