@@ -235,7 +235,13 @@ def _coerce_seed(value: Any) -> Optional[int]:
         return None
 
 
-def _make_reward_fn(scenario_fn_or_generator, curriculum_level: int, model, tokenizer):
+def _make_reward_fn(
+    scenario_fn_or_generator,
+    curriculum_level: int,
+    model,
+    tokenizer,
+    output_dir: str,
+):
     """
     Build a GRPOTrainer-compatible reward function that runs a full episode.
 
@@ -244,6 +250,9 @@ def _make_reward_fn(scenario_fn_or_generator, curriculum_level: int, model, toke
 
     ``scenario_fn_or_generator`` may be a CrisisGenerator (for diverse sampling)
     or a plain callable (fixed scenario type).
+
+    ``output_dir`` is used to append per-batch rewards to ``reward_log.json``;
+    it is not passed to the inner ``reward_fn`` (TRL fixes that signature).
     """
     def reward_fn(prompts: List[str], completions: List[str], **kwargs) -> List[float]:
         """
@@ -324,6 +333,39 @@ def _make_reward_fn(scenario_fn_or_generator, curriculum_level: int, model, toke
             )
         else:
             print(f"[DEBUG] reward_fn: rewards={[round(r, 4) for r in rewards]} std={_std:.4f}")
+
+        # ── Direct reward logging (belt-and-suspenders) ───────────────
+        # TrainerCallback log metrics depend on TRL's internal key names which
+        # vary across versions. Writing here guarantees we capture every
+        # reward regardless of TRL version or logging config.
+        _log_path = os.path.join(output_dir, "reward_log.json")
+        try:
+            if os.path.exists(_log_path):
+                with open(_log_path) as _rf:
+                    _existing = json.load(_rf)
+            else:
+                _existing = []
+        except Exception:
+            _existing = []
+        _level = (
+            scenario_fn_or_generator.curriculum_level
+            if hasattr(scenario_fn_or_generator, "curriculum_level")
+            else curriculum_level
+        )
+        for _r in rewards:
+            _existing.append(
+                {
+                    "episode": len(_existing) + 1,
+                    "reward": round(float(_r), 6),
+                    "level": _level,
+                }
+            )
+        try:
+            with open(_log_path, "w") as _lf:
+                json.dump(_existing, _lf, indent=2)
+        except Exception as _e:
+            print(f"[WARN] Could not write reward_log: {_e}")
+        # ─────────────────────────────────────────────────────────────
 
         return rewards
 
@@ -414,6 +456,7 @@ def train(
     num_episodes: int = GRPO_NUM_TRAIN_EPISODES,
     output_dir: str = "./outputs/crisisops_grpo",
     seed: int = 42,
+    report_to: str = "none",
 ) -> None:
     """
     Main GRPO training entry point.
@@ -426,6 +469,7 @@ def train(
         num_episodes:     Number of training episodes
         output_dir:       Directory for saving checkpoints and logs
         seed:             Global random seed
+        report_to:        HuggingFace Trainer `report_to` (e.g. "wandb", "none")
     """
     global _training_reward_log
     _training_reward_log = []
@@ -567,8 +611,14 @@ def train(
         "logging_steps": GRPO_LOGGING_STEPS,
         "save_steps": 50,
         "seed": seed,
-        "report_to": "none",  # disable wandb/tensorboard by default
+        "report_to": report_to,
     }
+
+    # TRL/GRPOConfig: optional gradient checkpointing (avoids reentrant issues on some PyTorch versions)
+    if "gradient_checkpointing" in _grpo_config_sig:
+        _grpo_kwargs["gradient_checkpointing"] = True
+    if "gradient_checkpointing_kwargs" in _grpo_config_sig:
+        _grpo_kwargs["gradient_checkpointing_kwargs"] = {"use_reentrant": False}
 
     # max_new_tokens: some TRL versions use max_completion_length instead
     if "max_new_tokens" in _grpo_config_sig:
@@ -602,7 +652,9 @@ def train(
 
     # The reward_fn must also vary scenarios per completion; pass the generator
     # so it can sample fresh scenario_fns inside each rollout.
-    reward_fn = _make_reward_fn(generator, current_level, model, tokenizer)
+    reward_fn = _make_reward_fn(
+        generator, current_level, model, tokenizer, output_dir
+    )
 
     # FIX: 3 Run curriculum checks during training via callback, not only after train().
     class _CurriculumProgressCallback(TrainerCallback):
@@ -614,9 +666,23 @@ def train(
         def on_log(self, args, state, control, logs=None, **kwargs):
             nonlocal current_level
             logs = logs or {}
-            # TRL 0.19.1 GRPOTrainer logs mean reward under "rewards"
-            if "rewards" in logs:
-                batch_reward = float(logs["rewards"])
+            # TRL 0.19.1 logs under "reward" (singular); other versions differ.
+            _reward_key = next(
+                (
+                    k
+                    for k in (
+                        "reward",
+                        "rewards",
+                        "train/reward",
+                        "train/rewards",
+                        "rewards/mean",
+                    )
+                    if k in (logs or {})
+                ),
+                None,
+            )
+            if _reward_key is not None:
+                batch_reward = float(logs[_reward_key])
                 # Approximate per-episode history from batch-level reward logs.
                 self._reward_history.extend([batch_reward] * GRPO_BATCH_SIZE)
 
@@ -655,30 +721,40 @@ def train(
 
             return control
 
-    trainer = GRPOTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        reward_funcs=reward_fn,
-        args=config,
-        train_dataset=full_dataset,
-        callbacks=[_CurriculumProgressCallback()],
-    )
+    _grpo_init = _inspect.signature(GRPOTrainer.__init__).parameters.keys()
+    _trainer_kwargs: Dict[str, Any] = {
+        "model": model,
+        "reward_funcs": reward_fn,
+        "args": config,
+        "train_dataset": full_dataset,
+        "callbacks": [_CurriculumProgressCallback()],
+    }
+    if "processing_class" in _grpo_init:
+        _trainer_kwargs["processing_class"] = tokenizer
+    else:
+        _trainer_kwargs["tokenizer"] = tokenizer
+    trainer = GRPOTrainer(**_trainer_kwargs)
     trainer.train()
 
-    # CHG-2: save full reward log as JSON
-    log_path = os.path.join(output_dir, "reward_log.json")  # CHG-2
-    with open(log_path, "w") as f:  # CHG-2
-        json.dump(_training_reward_log, f, indent=2)  # CHG-2
-    print(f"Reward log saved to {log_path}")  # CHG-2
+    # Use the reward log written directly by reward_fn (belt-and-suspenders);
+    # on_log may miss steps depending on TRL version / logging.
+    _log_path = os.path.join(output_dir, "reward_log.json")
+    if os.path.exists(_log_path):
+        with open(_log_path) as _f:
+            _log_data = json.load(_f)
+        print(f"Reward log: {len(_log_data)} entries at {_log_path}")
+    else:
+        _log_data = []
+        print("WARNING: reward_log.json not found after training")
 
     # CHG-2: save training curve as PNG (no plt.show — save only)
     try:  # CHG-2
         import matplotlib  # CHG-2
         matplotlib.use("Agg")  # CHG-2: non-interactive backend
         import matplotlib.pyplot as plt  # CHG-2
-        episodes = [r["episode"] for r in _training_reward_log]  # CHG-2
-        rewards = [r["reward"] for r in _training_reward_log]  # CHG-2
-        levels = [r["level"] for r in _training_reward_log]  # CHG-2
+        episodes = [r["episode"] for r in _log_data]  # CHG-2
+        rewards = [r["reward"] for r in _log_data]  # CHG-2
+        levels = [r["level"] for r in _log_data]  # CHG-2
 
         fig, ax = plt.subplots(figsize=(10, 5))  # CHG-2
         ax.plot(episodes, rewards, color="#2563eb", linewidth=1.5, label="CF Reward")  # CHG-2
