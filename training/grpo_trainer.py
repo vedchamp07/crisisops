@@ -252,7 +252,7 @@ def _make_reward_fn(scenario_fn_or_generator, curriculum_level: int, model, toke
         Each completion is treated as the first action response.  The episode
         then runs until done or MAX_EPISODE_STEPS.
         """
-        from env.environment import CrisisOpsEnv, MAX_STEPS
+        from env.environment import CrisisOpsEnv
         from env.crisis_generator import CrisisGenerator
 
         rewards = []
@@ -268,6 +268,9 @@ def _make_reward_fn(scenario_fn_or_generator, curriculum_level: int, model, toke
                 ep_seed = _coerce_seed(episode_seeds[i])
             if ep_seed is None:
                 ep_seed = random.randint(0, 2**31 - 1)
+            # Vary seed by completion index so each generation in the group
+            # faces a slightly different scenario, increasing reward variance.
+            ep_seed = (ep_seed + i * 1000007) % (2**31)
 
             # Sample scenario: use a seeded rng so the same ep_seed always
             # produces the same scenario type (reproducibility).
@@ -302,11 +305,25 @@ def _make_reward_fn(scenario_fn_or_generator, curriculum_level: int, model, toke
                     continue
                 action = _inner_agent_action(obs, step + 1)
 
-            rewards.append(float(reward_val))
+            # Add tiny Gaussian noise to break reward symmetry within GRPO groups.
+            # When the model produces identical completions early in training, all
+            # rewards are identical → advantage = 0 → zero loss → no learning.
+            # Noise std=0.01 is negligible vs the reward signal range (~0.4) but
+            # guarantees non-zero std within each group, allowing gradients to flow.
+            _noise = random.gauss(0, 0.01)
+            rewards.append(float(reward_val) + _noise)
 
-        # OOM fallback: batch 2 + gen 2 can tie rewards → zero advantage; optional jitter
-        if GRPO_BATCH_SIZE == 2 and GRPO_NUM_GENERATIONS == 2:
-            rewards = [r + random.gauss(0, 0.01) for r in rewards]
+        # Debug: log reward stats every time reward_fn is called
+        _mean = sum(rewards) / len(rewards) if rewards else 0.0
+        _var = sum((r - _mean) ** 2 for r in rewards) / len(rewards) if rewards else 0.0
+        _std = _var**0.5
+        if _std < 1e-6:
+            print(
+                f"[WARN] reward_fn: zero variance in batch of {len(rewards)} — "
+                f"all rewards identical ({rewards[0]:.4f}). Loss will be 0."
+            )
+        else:
+            print(f"[DEBUG] reward_fn: rewards={[round(r, 4) for r in rewards]} std={_std:.4f}")
 
         return rewards
 
@@ -410,6 +427,9 @@ def train(
         output_dir:       Directory for saving checkpoints and logs
         seed:             Global random seed
     """
+    global _training_reward_log
+    _training_reward_log = []
+
     try:
         from unsloth import FastLanguageModel
         from trl import GRPOTrainer, GRPOConfig
@@ -567,6 +587,10 @@ def train(
     # temperature: some TRL versions don't expose this directly in GRPOConfig
     if "temperature" in _grpo_config_sig:
         _grpo_kwargs["temperature"] = GRPO_TEMPERATURE
+
+    # Advantage normalization: TRL GRPOTrainer already uses (std + 1e-4) in code.
+    # Do NOT set GRPOConfig "epsilon" here — that is the PPO clip range (~0.2), not a
+    # numerical-stability term for the std denominator.
 
     # mini_batch_size: named differently in some versions
     if "per_device_mini_train_batch_size" in _grpo_config_sig:
