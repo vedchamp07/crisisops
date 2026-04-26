@@ -128,7 +128,7 @@ The curriculum starts at level 1 (one honest member, one liar, one crisis) and u
 
 One honest note: 1.5B is small for this task. The expected final reward is in the +0.05 to +0.15 range, not near the oracle's +0.34. But the behavioural signature, higher cross-verification rate, faster liar identification and more proactive stakeholder communication is visible even when the absolute number is modest. We think that story is more interesting than raw scores: you can see *what* the model learned to do differently, not just *how much* the number went up.
 
-![Training Plots](https://github.com/vedchamp07/crisisops/blob/Shloka3/Training%20Plots.png)
+<img width="1273" height="685" alt="Training Plots" src="https://github.com/user-attachments/assets/bfb022c7-39ed-4d1d-a123-21d4ab09d921" />
 
 ---
 
