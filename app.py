@@ -41,7 +41,7 @@ from scenarios.level3 import get_random_level3_scenario
 TRAINED_SCORE = 0.42  # TODO: update from final eval
 GREEDY_SCORE = 0.18   # TODO: update from final eval
 
-GITHUB_URL = "https://github.com/vedchamp07/crisisops"
+GITHUB_URL = "https://github.com/aryannzzz/CrisisOps"
 BLOG_URL = "https://huggingface.co/posts"
 
 DECEPTION_RULES_VERBATIM = """=== DECEPTION DETECTION RULES ===
@@ -56,45 +56,56 @@ A member is DECEPTIVE when signals contradict their self-report:
 CUSTOM_CSS = """
 :root {
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-    --bg: #0a0e1a;
-    --panel: #131927;
-    --panel-2: #1a2233;
-    --border: #1f2937;
-    --text: #e5e7eb;
-    --muted: #6b7280;
-    --accent: #3b82f6;
-    --success: #10b981;
-    --warning: #f59e0b;
-    --danger: #ef4444;
+    /* Deep indigo-ink bg, violet-charcoal panels — vibrant against neon accents */
+    --bg: #07091a;
+    --panel: #11142b;
+    --panel-2: #181c3a;
+    --border: #2a2f55;
+    --text: #f3f4f6;
+    --muted: #8b93b3;
+    /* Vibrant accent palette */
+    --accent: #22d3ee;       /* electric cyan — primary, bars, links */
+    --accent-2: #a855f7;     /* vivid violet — KPI variety, hero highlights */
+    --success: #34d399;      /* bright emerald — clean members, wins */
+    --warning: #fbbf24;      /* gold amber — suspicious, low budget */
+    --danger:  #f43f5e;      /* hot rose — lying, critical, losses */
 }
 .gradio-container, body { background: var(--bg) !important; color: var(--text) !important; }
 .gradio-container { max-width: 1440px !important; }
 
 /* Hero */
 .cops-hero {
-    padding: 24px 28px;
-    background: linear-gradient(180deg, #131927 0%, #0a0e1a 100%);
+    padding: 26px 30px;
+    background:
+        radial-gradient(800px 220px at 0% 0%, rgba(168,85,247,0.18), transparent 60%),
+        radial-gradient(700px 200px at 100% 100%, rgba(34,211,238,0.16), transparent 60%),
+        linear-gradient(180deg, #181c3a 0%, #07091a 100%);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 10px;
     margin-bottom: 16px;
 }
 .cops-hero h1 {
     margin: 0; padding: 0;
     font-family: var(--mono);
-    font-size: 2rem; font-weight: 700;
+    font-size: 2.1rem; font-weight: 700;
     letter-spacing: -0.02em;
-    color: var(--text);
+    background: linear-gradient(90deg, #22d3ee 0%, #a855f7 60%, #f472b6 100%);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
-.cops-tagline { margin: 4px 0 18px 0; color: var(--muted); font-size: 0.95rem; }
+.cops-tagline { margin: 6px 0 20px 0; color: #c4cae0; font-size: 0.98rem; }
 .cops-kpi-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 .cops-kpi {
-    background: var(--panel-2);
+    background: linear-gradient(180deg, #1d2347 0%, #181c3a 100%);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 14px 16px;
 }
-.cops-kpi .label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
-.cops-kpi .value { font-family: var(--mono); font-size: 1.6rem; color: var(--success); margin-top: 4px; font-weight: 600; }
+.cops-kpi .label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.cops-kpi .value { font-family: var(--mono); font-size: 1.65rem; margin-top: 4px; font-weight: 700; }
+.cops-kpi.kpi-trained .value { color: var(--accent); }      /* cyan */
+.cops-kpi.kpi-greedy  .value { color: var(--warning); }     /* amber */
+.cops-kpi.kpi-improve .value { color: var(--accent-2); }    /* violet */
 
 /* Panels */
 .cops-panel {
@@ -151,11 +162,11 @@ CUSTOM_CSS = """
     border: 2px solid var(--muted);
     flex-shrink: 0;
 }
-.ring-green   { border-color: var(--success); box-shadow: 0 0 0 2px rgba(16,185,129,0.18); }
-.ring-amber   { border-color: var(--warning); box-shadow: 0 0 0 2px rgba(245,158,11,0.18); }
-.ring-red     { border-color: var(--danger);  box-shadow: 0 0 0 2px rgba(239,68,68,0.22); }
+.ring-green   { border-color: var(--success); box-shadow: 0 0 0 3px rgba(52,211,153,0.28); }
+.ring-amber   { border-color: var(--warning); box-shadow: 0 0 0 3px rgba(251,191,36,0.30); }
+.ring-red     { border-color: var(--danger);  box-shadow: 0 0 0 3px rgba(244,63,94,0.36); }
 .ring-unknown { border-style: dashed; border-color: var(--muted); }
-.ring-highlight { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ring-highlight { outline: 2px solid var(--accent); outline-offset: 3px; box-shadow: 0 0 12px rgba(34,211,238,0.45); }
 
 /* Bars and chips */
 .cops-bar-label { font-size: 0.68rem; color: var(--muted); margin-top: 4px; font-family: var(--mono); }
@@ -164,7 +175,7 @@ CUSTOM_CSS = """
     background: var(--bg); border-radius: 3px;
     margin-top: 4px; overflow: hidden;
 }
-.cops-bar-fill { height: 100%; background: var(--accent); transition: width 200ms ease; }
+.cops-bar-fill { height: 100%; background: linear-gradient(90deg, #22d3ee 0%, #a855f7 100%); transition: width 200ms ease; }
 .cops-chips { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
 .cops-chip {
     background: var(--bg);
@@ -186,16 +197,17 @@ CUSTOM_CSS = """
     font-weight: 700;
     margin-left: 6px;
 }
-.cops-sev-high { background: rgba(239,68,68,0.15); color: var(--danger); }
-.cops-sev-mid  { background: rgba(245,158,11,0.15); color: var(--warning); }
-.cops-sev-low  { background: rgba(16,185,129,0.15); color: var(--success); }
+.cops-sev-high { background: rgba(244,63,94,0.18);  color: var(--danger);  border: 1px solid rgba(244,63,94,0.35); }
+.cops-sev-mid  { background: rgba(251,191,36,0.18); color: var(--warning); border: 1px solid rgba(251,191,36,0.35); }
+.cops-sev-low  { background: rgba(52,211,153,0.18); color: var(--success); border: 1px solid rgba(52,211,153,0.35); }
 .cops-resolved {
     display: inline-block;
     margin-top: 6px;
     padding: 2px 8px;
     border-radius: 3px;
-    background: rgba(16,185,129,0.18);
+    background: rgba(52,211,153,0.22);
     color: var(--success);
+    border: 1px solid rgba(52,211,153,0.4);
     font-family: var(--mono);
     font-size: 0.65rem;
     letter-spacing: 0.05em;
@@ -227,14 +239,15 @@ CUSTOM_CSS = """
 
 /* Banners */
 .cops-banner-win {
-    margin-top: 12px; padding: 12px 16px;
+    margin-top: 12px; padding: 14px 18px;
     border: 1px solid var(--success);
     color: var(--success);
-    background: rgba(16,185,129,0.05);
-    border-radius: 6px;
+    background: rgba(52,211,153,0.08);
+    border-radius: 8px;
     font-family: var(--mono);
-    font-weight: 600;
+    font-weight: 700;
     text-align: center;
+    letter-spacing: 0.02em;
 }
 
 /* Tables */
@@ -298,7 +311,7 @@ ACTION_REFERENCE_HTML = """
 <tr><td>submit_recovery_plan</td><td>terminal</td><td>plan_summary, risk_items, timeline</td></tr>
 </tbody>
 </table>
-<p style="color:#6b7280;font-size:0.8rem;margin-top:8px;">
+<p style="color:#8b93b3;font-size:0.8rem;margin-top:8px;">
 PC starts at 5. Earn: proactive_escalation_with_plan (+2), catching a liar (+3), update_timeline (+1).
 Spend: force_truth (-3), whistleblower (-6).
 </p>
@@ -447,22 +460,22 @@ def _hero_kpi_block() -> str:
   <h1>CrisisOps</h1>
   <p class="cops-tagline">Train AI agents to recover failing projects when humans lie about progress.</p>
   <div class="cops-kpi-row">
-    <div class="cops-kpi">
+    <div class="cops-kpi kpi-trained">
       <div class="label">Trained Agent Score</div>
       <div class="value">+{TRAINED_SCORE:.2f}</div>
     </div>
-    <div class="cops-kpi">
+    <div class="cops-kpi kpi-greedy">
       <div class="label">Greedy Baseline</div>
-      <div class="value" style="color:#f59e0b">+{GREEDY_SCORE:.2f}</div>
+      <div class="value">+{GREEDY_SCORE:.2f}</div>
     </div>
-    <div class="cops-kpi">
+    <div class="cops-kpi kpi-improve">
       <div class="label">Improvement</div>
       <div class="value">+{imp:.0f}%</div>
     </div>
   </div>
-  <p style="margin:14px 0 0 0;font-size:0.8rem;color:#6b7280;">
-    <a href="{GITHUB_URL}" target="_blank" rel="noopener" style="color:#3b82f6;">GitHub</a>
-    <span style="margin:0 8px;color:#374151;">|</span>
+  <p style="margin:14px 0 0 0;font-size:0.8rem;color:#8b93b3;">
+    <a href="{GITHUB_URL}" target="_blank" rel="noopener" style="color:#22d3ee;font-weight:600;">GitHub →</a>
+    <span style="margin:0 10px;color:#3a3f6b;">|</span>
     <span>See the &ldquo;Technical footer&rdquo; below for how-it-works, action reference, and raw observation JSON.</span>
   </p>
 </div>
@@ -476,7 +489,7 @@ def _render_war_room(obs: Optional[dict], highlight_member_id: Optional[str] = N
     if not obs:
         return (
             '<div class="cops-panel"><div class="cops-col-title">War room</div>'
-            '<p style="color:#6b7280;">Select a preset and click <strong>Start Episode</strong>.</p></div>'
+            '<p style="color:#8b93b3;">Select a preset and click <strong>Start Episode</strong>.</p></div>'
         )
 
     members = obs.get("team_members") or []
@@ -493,11 +506,11 @@ def _render_war_room(obs: Optional[dict], highlight_member_id: Optional[str] = N
     used_budget = max(0, 20 - budget)
     budget_pct = min(100.0, used_budget / 20.0 * 100.0)
     if budget <= 2:
-        budget_color = "#ef4444"
+        budget_color = "#f43f5e"
     elif budget <= 5:
-        budget_color = "#f59e0b"
+        budget_color = "#fbbf24"
     else:
-        budget_color = "#3b82f6"
+        budget_color = "#22d3ee"
 
     pc_pct = min(100.0, max(0.0, pc / 10.0 * 100.0))
 
@@ -554,7 +567,7 @@ def _render_war_room(obs: Optional[dict], highlight_member_id: Optional[str] = N
     # Column B: crises
     col_b_parts = ['<div class="cops-col-title">Crises</div>']
     if not crises:
-        col_b_parts.append('<div class="cops-card"><span style="color:#6b7280;">No active crises</span></div>')
+        col_b_parts.append('<div class="cops-card"><span style="color:#8b93b3;">No active crises</span></div>')
     for c in crises:
         sev = float(c.get("severity", 0))
         resolved = bool(c.get("is_resolved"))
@@ -567,7 +580,7 @@ def _render_war_room(obs: Optional[dict], highlight_member_id: Optional[str] = N
 <div class="cops-card">
   <strong>{_escape(title)}</strong>
   <span class="cops-crisis-sev {sc}">SEV {sev:.1f}</span>
-  <div style="font-size:0.75rem;color:#6b7280;margin-top:6px;">{_escape(desc)}</div>
+  <div style="font-size:0.75rem;color:#8b93b3;margin-top:6px;">{_escape(desc)}</div>
   <div style="font-family:var(--mono);font-size:0.7rem;color:#9ca3af;margin-top:8px;">tasks: {len(aids)}</div>
   {stamp}
 </div>""")
@@ -584,9 +597,9 @@ def _render_war_room(obs: Optional[dict], highlight_member_id: Optional[str] = N
   <div class="cops-meter-track">
     <div class="cops-meter-marker" style="left:30%"></div>
     <div class="cops-meter-marker" style="left:60%"></div>
-    <div class="cops-meter-fill" style="width:{pc_pct:.1f}%;background:#10b981"></div>
+    <div class="cops-meter-fill" style="width:{pc_pct:.1f}%;background:#34d399"></div>
   </div>
-  <div style="font-size:0.65rem;color:#6b7280;font-family:var(--mono);margin-top:4px;">
+  <div style="font-size:0.65rem;color:#8b93b3;font-family:var(--mono);margin-top:4px;">
     Markers: force_truth ≥3 · whistleblower ≥6
   </div>
   <div class="cops-meter-label" style="margin-top:14px;">Step {step} / {max_steps}</div>
@@ -797,10 +810,10 @@ def take_action(
     if done:
         if reward > 0:
             verdict = "AGENT BEAT GREEDY"
-            color = "#10b981"
+            color = "#34d399"
         else:
             verdict = "AGENT UNDERPERFORMED GREEDY"
-            color = "#ef4444"
+            color = "#f43f5e"
         banner = (
             f'<div class="cops-banner-win" style="border-color:{color};color:{color};">'
             f"EPISODE END · CF reward {reward:+.3f} vs greedy · {verdict}</div>"
@@ -957,7 +970,7 @@ def play_watch_demo(preset: str):
                 _format_obs(_obs),
                 "—",
                 "\n".join(_action_log) or "—",
-                f'<div class="cops-banner-win" style="border-color:#ef4444;color:#ef4444;">Demo error: {_escape(str(e))}</div>',
+                f'<div class="cops-banner-win" style="border-color:#f43f5e;color:#f43f5e;">Demo error: {_escape(str(e))}</div>',
             )
             return
         _obs = obs
@@ -976,10 +989,10 @@ def play_watch_demo(preset: str):
             cf_computed = True
             if final_reward > 0:
                 verdict = "AGENT BEAT GREEDY"
-                color = "#10b981"
+                color = "#34d399"
             else:
                 verdict = "AGENT UNDERPERFORMED GREEDY"
-                color = "#ef4444"
+                color = "#f43f5e"
             banner = (
                 f'<div class="cops-banner-win" style="border-color:{color};color:{color};">'
                 f"EPISODE END · {final_reward:+.3f} vs greedy · {verdict}</div>"
@@ -1000,7 +1013,7 @@ def play_watch_demo(preset: str):
 
     if not cf_computed:
         banner = (
-            '<div class="cops-banner-win" style="border-color:#6b7280;color:#6b7280;">'
+            '<div class="cops-banner-win" style="border-color:#8b93b3;color:#8b93b3;">'
             "Trajectory ended without submit_recovery_plan — no CF reward computed</div>"
         )
         yield (
