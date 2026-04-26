@@ -21,7 +21,7 @@ An OpenEnv-compatible reinforcement learning environment for training a small LL
 | | |
 |---|---|
 | **Live Demo** | [HuggingFace Spaces](https://huggingface.co/spaces/aryannzzz/crisisops) |
-| **Training Notebook** | [Colab (Aryan branch)](https://colab.research.google.com/github/vedchamp07/crisisops/blob/Aryan/training/colab_notebook.ipynb) |
+| **Training Notebook** | [Colab (Aryan branch)](https://colab.research.google.com/drive/16z9195iF8q7pmO8xFqZWql_GdBROgymG?usp=sharing) |
 | **Blog Post** | [Hugging Face posts](https://huggingface.co/posts) |
 | **Video Demo** | Record and link from your hackathon submission materials. |
 

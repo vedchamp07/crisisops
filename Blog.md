@@ -1,10 +1,10 @@
 # CrisisOps v2: Training an AI Project Manager to Detect Lies
 
-**OpenEnv Hackathon 2026 · IIT Madras · Themes 1 + 2 + 3.1 + 4**
+**OpenEnv Hackathon 2026 · Delta Dreamers · CrisisOps · Themes 1 + 2 + 3.1 + 4**
 
 ---
 
-> *"In Kube SRE Gym, the agent reads machine logs — logs don't lie. In CrisisOps, the agent asks engineers — engineers do lie."*
+> *In several gym environments, the agent reads machine logs, and as we know, logs don't lie. In CrisisOps, the agent asks engineers, and as we know... engineers do lie.*
 
 I built this environment because I kept thinking about a problem that doesn't exist in any RL benchmark I know of: what happens when the information your agent receives is **deliberately falsified** by the people generating it?
 
