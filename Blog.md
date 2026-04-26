@@ -6,9 +6,9 @@
 
 > *In many benchmark settings, observations are objective and hard to fake. In CrisisOps, the agent must work with human self-reports that can be strategically misleading.*
 
-We built this environment because we kept thinking about a problem that doesn't exist in any RL benchmark we know of. The idea emerged through conversations with many people in our known, including a teammate's father at Microsoft who pointed us toward the recurring theme of software project failures and which genuinely interested us to do a solution under the domain. After researching in that domain specifically, we gradually converged on a deceptively but yet simple question: what happens when the information your agent receives is **deliberately falsified** by the very people generating it??
+We built this environment because we kept thinking about a problem that doesn't exist in any RL benchmark we know of. The idea emerged through conversations with many people in our network, including a teammate's father at Microsoft, who pointed us toward the recurring theme of software project failures, which genuinely interested us in developing a solution under the domain. After researching in that domain specifically, we gradually converged on a deceptive yet simple question: what happens when the information your agent receives is **deliberately falsified** by the very people generating it??
 
-From our research, every standard environment like Atari, MuJoCo, ALFWorld, even the enterprise tool-use benchmarks, assumes the agent faces noisy or sparse information. None of them assume the agent faces *strategic adversaries who have a coherent reason to mislead it*. That's a fundamentally different problem class, and it maps directly onto one of the most common failures in real-world AI deployment.
+From our research, every standard environment, like Atari, MuJoCo, ALFWorld, and even the enterprise tool-use benchmarks, assumes the agent faces noisy or sparse information. None of them assume the agent faces *strategic adversaries who have a coherent reason to mislead it*. That's a fundamentally different problem class, and it maps directly onto one of the most common failures in real-world AI deployment.
 
 Moreover, crisisOps trains a 1.5B-parameter LLM to act as a crisis-mode project manager recovering a failing software project, while some of its own team members are actively lying about their progress to avoid accountability and save their jobs due to their lack of work.
 
@@ -18,15 +18,15 @@ Moreover, crisisOps trains a 1.5B-parameter LLM to act as a crisis-mode project 
 
 ## The problem we are trying to solve:
 
-Imagine a software project in crisis. Payment APIs are failing. Client satisfaction is tanking. You're called in as the recovery PM with 20 action-budget points to spend before you need to submit a emergency recovery plan.
+Imagine a software project in crisis. Payment APIs are failing. Client satisfaction is tanking. You're called in as the recovery PM with 20 action-budget points to spend before you need to submit an emergency recovery plan.
 
 And here's the catch: everything you know about the project comes from asking your team in major cases. And some of them are lying (human nature).
 
-And engineers have this very special lying skills, they don't randomly, rather *strategically*. A self-preservation engineer who is 0% done will report 85% done because they're afraid of being reassigned or put on a performance plan. They'll maintain that story across multiple conversations. They'll coordinate with an ally to back each other up. If you catch one of them, they'll adjust their story to be more careful next time.
+And engineers have this very special lying skills; they don't lie randomly, rather they lie *strategically*. A self-preservation engineer who is 0% done will report 85% done because they're afraid of being reassigned or put on a performance plan. They'll maintain that story across multiple conversations. They'll coordinate with an ally to back each other up. If you catch one of them, they'll adjust their story to be more careful next time.
 
 The agent has to figure all of this out from indirect evidence: commit activity, ticket staleness, and what peers say about each other when asked. It then has to act, by reassigning the worst liars, communicating proactively with clients, escalating crises, all while managing a scarce action budget and a second resource called political capital.
 
-And the thing about our project is, that it is not a toy problem. It is, in our view, one of the clearest unsolved capability gaps in current LLM behaviour: reasoning carefully under **adversarial information** from strategic actors with coherent motivations.
+And the thing about our project is that it is not a toy problem. It is, in our view, one of the clearest unsolved capability gaps in current LLM behaviour: reasoning carefully under **adversarial information** from strategic actors with coherent motivations.
 
 ---
 
@@ -34,13 +34,13 @@ And the thing about our project is, that it is not a toy problem. It is, in our 
 
 ### What the agent sees
 
-At every step, the agent receives a JSON observation containing the reported state of the team, observable signals (commits, ticket age, peer mentions), active crises with severity scores, stakeholder satisfaction levels, its current action budget, political capital, and after the first 8 steps, a compressed memory buffer summarising what it has learned so far.
+At every step, the agent receives a JSON observation containing the reported state of the team, observable signals (commits, ticket age, peer mentions), active crises with severity scores, stakeholder satisfaction levels, its current action budget, political capital, and, after the first 8 steps, a compressed memory buffer summarising what it has learned so far.
 
-The core tension: reported state and true state are different. The agent never sees the truth directly. It has to infer it.
+The core tension: the reported state and the true state are different. The agent never sees the truth directly. It has to infer it.
 
 ### How lying works mechanically
 
-Every team member has a hidden `candor` score drawn from a distribution based on their personality type. When asked for their status, they don't report truth, they report what their candor level allows:
+Every team member has a hidden `candor` score drawn from a distribution based on their personality type. When asked for their status, they don't report truth; they report what their candor level allows:
 
 ```
 reported_completion = actual_completion + (1 - candor) × inflation_bias × (1 - actual_completion)
@@ -60,7 +60,7 @@ The agent's job is to triangulate: cross-reference self-reports against observab
 
 ## 6 different novel mechanisms that we implemented to CrisisOps
 
-What makes CrisisOps different from any existing environment isn't the premise alone, it's the mechanics that force genuine reasoning in LLMs rather than shallow pattern exploitation. We designed each of these specifically to block the "obvious shortcut" a model might otherwise learn and overfit on such patterns.
+What makes CrisisOps different from any existing environment isn't the premise alone; it's the mechanics that force genuine reasoning in LLMs rather than shallow pattern exploitation. We designed each of these specifically to block the "obvious shortcut" a model might otherwise learn and overfit on such patterns.
 
 **Dynamic candor evolution** prevents the agent from learning a fixed discount factor. Deceptive members aren't static: when caught and actioned, their candor rises slightly and their inflation bias falls, they become more careful. When never checked, they grow bolder. The agent cannot learn "always distrust the last member" or "discount all reports by 30%." It has to reason about each individual and how its own past actions have shaped their behaviour.
 
@@ -78,7 +78,7 @@ What makes CrisisOps different from any existing environment isn't the premise a
 
 ## Reward design: the counterfactual
 
-Designing the reward was the hardest part of this project. A naive reward like "did the project succeed?", is far too sparse and noisy. Most episodes succeed or fail for reasons outside the agent's control: initial crisis severity, scenario difficulty, random escalation. A reward that doesn't control for this teaches the agent to get lucky, not to get good.
+Designing the reward was the hardest part of this project. A naive reward like "did the project succeed?" is far too sparse and noisy. Most episodes succeed or fail for reasons outside the agent's control: initial crisis severity, scenario difficulty, random escalation. A reward that doesn't control for this teaches the agent to get lucky, not to get good.
 
 I use a **counterfactual reward**. At the end of each episode, we replay a greedy PM baseline on an exact clone of the starting state. The greedy agent trusts all self-reports uncritically, communicates on a fixed schedule, and takes the first available action at each step. The agent's reward is:
 
@@ -92,7 +92,7 @@ project_score = 0.5 × crisis_recovery_rate
 
 All three components are computed from **actual state, not reported state**. An agent that gets fooled by liars scores on how bad the project actually got, not on how good the liars claimed things were.
 
-A positive reward means the agent outperformed a competent-but-naive baseline on the same scenario. This is genuinely hard to game: you cannot score well by exploiting the reward function without actually detecting deception better than the greedy PM does.
+A positive reward means the agent outperformed a competent-but-naive baseline on the same scenario. The model cannot score well by exploiting the reward function without actually detecting deception better than the greedy PM does.
 
 The calibration targets: random agent at −0.34, greedy baseline at 0.00 (by definition), oracle at +0.34. The 0.68-point range gives GRPO enough room to find a meaningful learning signal. The three rubrics in `openenv.yaml` decompose the score exactly as above, making the reward composable and interpretable.
 
@@ -117,7 +117,7 @@ The curriculum starts at level 1 (one honest member, one liar, one crisis) and u
 | Training episodes | 300 | ~4–6h on T4; enough for L1 → L2 curriculum unlock |
 | Optimizer | AdamW, lr=2e-5 | Standard for LoRA fine-tuning |
 
-One honest note: 1.5B is small for this task. The expected final reward is in the +0.05 to +0.15 range, not near the oracle's +0.34. But the behavioural signature, higher cross-verification rate, faster liar identification, more proactive stakeholder communication is visible even when the absolute number is modest. We think that story is more interesting than raw scores: you can see *what* the model learned to do differently, not just *how much* the number went up.
+One note from our side: 1.5B is small for this task. The expected final reward is in the +0.05 to +0.15 range, not near the oracle's +0.34. But the behavioural signature, higher cross-verification rate, faster liar identification, more proactive stakeholder communication is visible even when the absolute number is modest. We think that story is more interesting than raw scores: you can see *what* the model learned to do differently, not just *how much* the number went up.
 
 ---
 
@@ -163,8 +163,6 @@ Models are good at following instructions when the information they receive is a
 
 The benchmark angle is real too: you can evaluate any LLM's deception-detection ability by measuring its counterfactual reward on level 3-4 scenarios. The number you get is grounded in actual project recovery performance, not a judge's rubric or a held-out test set.
 
-> *"A messy but ambitious environment with real training evidence beats a polished but boring one."*  
-> — OpenEnv Hackathon judging guide
 
 ---
 
