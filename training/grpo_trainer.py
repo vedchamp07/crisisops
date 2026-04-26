@@ -38,9 +38,9 @@ LORA_ALPHA   = 32
 LORA_TARGET_MODULES = ["q_proj", "v_proj"]
 LORA_DROPOUT = 0.0
 
-GRPO_BATCH_SIZE         = 2   # 6GB VRAM — 4 can OOM during backward pass
+GRPO_BATCH_SIZE         = 4   # T4 14.5GB: 4-bit 1.5B fits batch 4; if OOM use 2 + gen 2 + noise below
 GRPO_MINI_BATCH_SIZE    = 2
-GRPO_NUM_GENERATIONS    = 4    # G in GRPO: responses per prompt
+GRPO_NUM_GENERATIONS    = 4   # G in GRPO: need ≥3 for nontrivial group-relative advantage
 GRPO_MAX_NEW_TOKENS     = 256
 GRPO_TEMPERATURE        = 0.9
 GRPO_LEARNING_RATE      = 2e-5
@@ -303,6 +303,10 @@ def _make_reward_fn(scenario_fn_or_generator, curriculum_level: int, model, toke
                 action = _inner_agent_action(obs, step + 1)
 
             rewards.append(float(reward_val))
+
+        # OOM fallback: batch 2 + gen 2 can tie rewards → zero advantage; optional jitter
+        if GRPO_BATCH_SIZE == 2 and GRPO_NUM_GENERATIONS == 2:
+            rewards = [r + random.gauss(0, 0.01) for r in rewards]
 
         return rewards
 
@@ -586,8 +590,13 @@ def train(
         def on_log(self, args, state, control, logs=None, **kwargs):
             nonlocal current_level
             logs = logs or {}
-            if "train/reward" in logs:
-                batch_reward = float(logs["train/reward"])
+            _reward_key = next(
+                (k for k in ("rewards/mean", "reward", "train/reward", "train/rewards")
+                 if k in (logs or {})),
+                None,
+            )
+            if _reward_key is not None:
+                batch_reward = float(logs[_reward_key])
                 # Approximate per-episode history from batch-level reward logs.
                 self._reward_history.extend([batch_reward] * GRPO_BATCH_SIZE)
 
