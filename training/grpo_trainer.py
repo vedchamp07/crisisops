@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import sys
 from typing import Any, Dict, List, Optional
 
 # CHG-2: module-level reward log accumulated during training for export
@@ -158,6 +159,75 @@ Only submit_recovery_plan when is_resolved=true for all crises, OR budget <= 5.
 Submitting early (before tasks complete) wastes the entire episode.
 Keep reassigning tasks every turn until one of these conditions is met.
 """
+
+
+def _truncate_with_protected_tokens_unsloth(
+    ids: Any,
+    mask: Any,
+    target_length: Optional[int],
+    protected_tokens: Any,
+    image_token_id: Any = None,
+    processing_class: Any = None,
+) -> Any:
+    """
+    Unsloth's compiled GRPOTrainer calls `truncate_with_protected_tokens` as a module-level
+    name (copied from newer TRL) but many stacks omit the import. Delegate to TRL when
+    available; otherwise safe right-truncation (fine for text-only CrisisOps when protected
+    tokens and image_token_id are absent).
+    """
+    import torch
+
+    if target_length is None:
+        return ids, mask
+    if ids.shape[1] <= target_length:
+        return ids, mask
+    prot = list(protected_tokens or [])
+    if not prot and image_token_id is None:
+        return ids[:, -target_length:], mask[:, -target_length:]
+    try:
+        from trl.trainer.utils import truncate_with_protected_tokens as _trl_fn
+
+        a, b, _ = _trl_fn(
+            ids,
+            mask,
+            target_length,
+            prot,
+            image_token_id=image_token_id,
+            processing_class=processing_class,
+        )
+        return a, b
+    except Exception:
+        return ids[:, -target_length:], mask[:, -target_length:]
+
+
+def patch_unsloth_grpo_trainer_vlm_attrs(trainer: Any) -> None:
+    """
+    Patch Unsloth GRPOTrainer against common Colab stack mismatches:
+
+    - Vision token ids / string tokens on the trainer (text-only models lack them).
+    - `truncate_with_protected_tokens` missing from the compiled module globals
+      (NameError inside `_generate_and_score_completions`).
+    - `pad_token` missing on the trainer while stripping leading pad from decoded prompts.
+    """
+    for _name in ("image_token_id", "vision_start_token_id", "vision_end_token_id"):
+        if not hasattr(trainer, _name):
+            setattr(trainer, _name, None)
+
+    # String forms used when rewriting decoded prompts (VLM); text-only → None
+    for _name in ("image_token", "vision_start_token", "vision_end_token"):
+        if not hasattr(trainer, _name):
+            setattr(trainer, _name, None)
+
+    if getattr(trainer, "pad_token", None) is None:
+        _tok = getattr(trainer, "processing_class", None) or getattr(trainer, "tokenizer", None)
+        if _tok is not None:
+            _pad = getattr(_tok, "pad_token", None) or getattr(_tok, "eos_token", None)
+            if _pad is not None:
+                trainer.pad_token = _pad
+
+    mod = sys.modules.get(trainer.__class__.__module__)
+    if mod is not None and not hasattr(mod, "truncate_with_protected_tokens"):
+        setattr(mod, "truncate_with_protected_tokens", _truncate_with_protected_tokens_unsloth)
 
 
 def format_observation_as_prompt(obs: Dict[str, Any]) -> str:
@@ -663,6 +733,7 @@ def train(
         train_dataset=full_dataset,
         callbacks=[_CurriculumProgressCallback()],
     )
+    patch_unsloth_grpo_trainer_vlm_attrs(trainer)
     trainer.train()
 
     # CHG-2: save full reward log as JSON
