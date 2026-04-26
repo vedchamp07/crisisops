@@ -16,17 +16,18 @@ python_version: "3.11"
 
 An OpenEnv-compatible reinforcement learning environment for training a small LLM to recover failing software projects against adversarially deceptive team members.
 
+> **"Logs don't lie. Engineers do."**
+> CrisisOps trains AI project managers to detect deliberate human deception during software crises.
+
 ## 🔗 Quick Links
 
 | | |
 |---|---|
-| **Live Demo** | [HuggingFace Spaces](https://huggingface.co/spaces/aryannzzz/crisisops) |
-| **Training Notebook** | [Colab (Aryan branch)](https://colab.research.google.com/drive/16z9195iF8q7pmO8xFqZWql_GdBROgymG?usp=sharing) |
-| **Blog Post** | [Hugging Face posts](https://huggingface.co/posts) |
-| **Video Demo** | Record and link from your hackathon submission materials. |
-
-> **"Logs don't lie. Engineers do."**  
-> CrisisOps trains AI project managers to detect deliberate human deception during software crises.
+| **Live Demo** | [HuggingFace Space](https://huggingface.co/spaces/aryannzzz/crisisops) |
+| **Codebase** | [github.com/aryannzzz/CrisisOps](https://github.com/aryannzzz/CrisisOps) |
+| **Blog Post** | [Blog.md on the Space](https://huggingface.co/spaces/aryannzzz/crisisops/blob/main/Blog.md) |
+| **Training Notebook** | [Kaggle](https://www.kaggle.com/code/aryannzzz/notebook56218a459b) |
+| **Training Curves (W&B)** | [wandb.ai/a-jacked-nerd-iit-madras/crisisops-grpo](https://wandb.ai/a-jacked-nerd-iit-madras/crisisops-grpo?nw=nwuserajackednerd) |
 
 ## 🏆 Hackathon Themes Covered
 
@@ -37,14 +38,30 @@ An OpenEnv-compatible reinforcement learning environment for training a small LL
 
 ## 📊 Results
 
+### Inference baseline (Ollama qwen2.5)
+
+Running a base LLM as the PM agent against the greedy baseline on the same scenarios:
+
+- **Greedy PM**: trusts all self-reports, mean `project_score` ≈ **0.50**
+- **LLM agent (qwen2.5 via Ollama)**: learns to cross-verify, catches deceptive members, mean `project_score` ≈ **0.65+**
+
+This establishes the headroom: a competent LLM with the right system prompt already beats the naive greedy baseline by ~0.15 points without any training, confirming the environment has a real signal to optimize for.
+
+### GRPO training progression (Weights & Biases)
+
+GRPO training on Qwen2.5-1.5B-Instruct (LoRA r=16, batch 4, G=4 generations per prompt) shows the training-reward rolling average increasing as the policy learns. Full live curves — reward, std, KL, completion length — are tracked on the [W&B project](https://wandb.ai/a-jacked-nerd-iit-madras/crisisops-grpo?nw=nwuserajackednerd).
+
 <img width="1273" height="685" alt="Training Plots" src="https://github.com/user-attachments/assets/8a7f23a6-b287-45b9-a292-ad12aecb2303" />
 
+### Calibration (20 episodes, pre-training)
 
-![Training Curve](plots/reward_curve.png)
+| Metric | Value |
+|---|---|
+| Random agent mean CF reward | −0.34 |
+| Greedy PM baseline | 0.00 (reference) |
+| Oracle agent mean CF reward | +0.34 |
 
-**Trained agent vs Greedy PM baseline:**
-- Greedy PM: trusts all self-reports, mean score ~0.50
-- Trained agent (300 episodes): learns to cross-verify, catches deceptive members, mean score ~0.65+
+The 0.34-point gap between random and oracle gives GRPO a meaningful signal to learn from. Within-batch reward std during early training is ~0.20–0.25 across the four GRPO completions, confirming non-degenerate gradients.
 
 ## 🆕 Novel Mechanisms (6 total)
 
@@ -66,35 +83,35 @@ The training signal is **counterfactual reward**: agent's final project score mi
 ```
 ./
 ├── env/
-│   ├── state.py           # ProjectState, TeamMember, Task, Crisis dataclasses
-│   ├── candor.py          # Hidden candor score + deception formula + observable signals
-│   ├── actions.py         # 16 action types (4 free / 10 cost-1 / 1 cost-2 / 1 terminal)
-│   ├── stakeholders.py    # Client and exec reactive state machines
-│   ├── schema_drift.py    # Mid-episode requirement change event system
-│   ├── crisis_generator.py # Weakness tracking + curriculum escalation
-│   └── environment.py     # CrisisOpsEnv — OpenEnv 0.2.1 interface
+│   ├── state.py             # ProjectState, TeamMember, Task, Crisis dataclasses
+│   ├── candor.py            # Hidden candor score + deception formula + observable signals
+│   ├── actions.py           # 16 action types (4 free / 10 cost-1 / 1 cost-2 / 1 terminal)
+│   ├── stakeholders.py      # Client and exec reactive state machines
+│   ├── schema_drift.py      # Mid-episode requirement change event system
+│   ├── crisis_generator.py  # Weakness tracking + curriculum escalation
+│   └── environment.py       # CrisisOpsEnv — OpenEnv 0.2.1 interface
 ├── reward/
-│   ├── baseline.py        # GreedyPMBaseline — deterministic, trusts all reports
-│   ├── counterfactual.py  # project_score() and counterfactual reward
-│   └── metrics.py         # cross_verification_rate, actions_to_recovery
+│   ├── baseline.py          # GreedyPMBaseline — deterministic, trusts all reports
+│   ├── counterfactual.py    # project_score() and counterfactual reward
+│   └── metrics.py           # cross_verification_rate, actions_to_recovery
 ├── training/
-│   ├── grpo_trainer.py    # GRPO loop: Qwen2.5-1.5B + Unsloth LoRA r=16
-│   ├── curriculum.py      # Level 1→4 unlock manager
-│   └── colab_notebook.ipynb
+│   ├── grpo_trainer.py      # GRPO loop: Qwen2.5-1.5B + Unsloth LoRA r=16
+│   ├── curriculum.py        # Level 1→4 unlock manager
+│   └── kaggle_notebook.ipynb
 ├── deployment/
-│   ├── jira_adapter.py    # Maps agent actions to Linear/Jira API calls
-│   └── mcp_server.py      # FastMCP server (OpenEnv HTTP endpoint)
+│   ├── jira_adapter.py      # Maps agent actions to Linear/Jira API calls
+│   └── mcp_server.py        # FastMCP server (OpenEnv HTTP endpoint)
 ├── baselines/
-│   ├── random_agent.py    # Random agent for reward range sanity check
-│   ├── llm_agent.py       # LLM-based agent eval (any provider)
-│   └── replay.py          # Narrative episode replay for demos
+│   ├── random_agent.py      # Random agent for reward range sanity check
+│   ├── llm_agent.py         # LLM-based agent eval (any provider)
+│   └── replay.py            # Narrative episode replay for demos
 ├── scenarios/
-│   ├── level1.py          # 3 templates: single crisis, one deceptive member
-│   ├── level2.py          # 3 templates: double crisis, two deceptive, schema drift
-│   ├── level3.py          # 3 templates: cascading, adversarial majority
-│   └── level4.py          # 3 templates: full disaster, information war
+│   ├── level1.py            # 3 templates: single crisis, one deceptive member
+│   ├── level2.py            # 3 templates: double crisis, two deceptive, schema drift
+│   ├── level3.py            # 3 templates: cascading, adversarial majority
+│   └── level4.py            # 3 templates: full disaster, information war
 ├── calibration/
-│   └── calibrate.py       # Greedy vs oracle on 20 episodes — run before training
+│   └── calibrate.py         # Greedy vs oracle on 20 episodes — run before training
 └── tests/
     ├── test_env.py
     ├── test_candor.py
@@ -102,11 +119,9 @@ The training signal is **counterfactual reward**: agent's final project score mi
     └── test_curriculum.py
 ```
 
-## 🚀 One-Click Training (Google Colab)
+## 🚀 One-Click Training (Kaggle)
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/aryannzzz/crisisops/blob/main/training/colab_notebook.ipynb)
-
-Run the notebook top-to-bottom. No setup required. Uses Unsloth + TRL GRPOTrainer on Qwen2.5-1.5B-Instruct.
+Open the [Kaggle notebook](https://www.kaggle.com/code/aryannzzz/notebook56218a459b), select T4 GPU, and run all cells top-to-bottom. No setup required. Uses Unsloth + TRL GRPOTrainer on Qwen2.5-1.5B-Instruct.
 
 ## Quick start
 
@@ -141,9 +156,9 @@ Each team member has a hidden `candor` float (0-1) sampled once per episode:
 
 The agent never sees `candor` directly. It must infer reliability by comparing reported completion against observable signals:
 
-- `ticket_age_days` -- days since the member's ticket last changed status (derived from actual velocity)
-- `commits_last_72h` -- commit count proxy (0 if actual progress stalled)
-- `peer_mentions` -- how often this member appears in others' dependency chains
+- `ticket_age_days` — days since the member's ticket last changed status (derived from actual velocity)
+- `commits_last_72h` — commit count proxy (0 if actual progress stalled)
+- `peer_mentions` — how often this member appears in others' dependency chains
 
 ### Action budget
 
@@ -151,10 +166,10 @@ Budget starts at **20**. Actions cost:
 
 | Cost              | Actions                                                                                                                                                                 |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Free (0)          | `query_status`, `query_member_report`, `query_observable_signals`, `query_ticket`                                                                                     |
+| Free (0)          | `query_status`, `query_member_report`, `query_observable_signals`, `query_ticket`                                                                                       |
 | 1 (standard)      | `reassign_task`, `communicate`, `cut_scope`, `escalate_risk`, `request_resource`, `update_timeline`, `consult_expert`, `query_peer_opinion`, `force_truth`, `trigger_whistleblower` |
-| 2 (heavy)         | `resolve_blocker`                                                                                                                                                     |
-| Terminal (cost 1) | `submit_recovery_plan`                                                                                                                                                 |
+| 2 (heavy)         | `resolve_blocker`                                                                                                                                                       |
+| Terminal (cost 1) | `submit_recovery_plan`                                                                                                                                                  |
 
 **16 action types in total** — 4 free, 10 at cost-1 (including the three extended actions `query_peer_opinion`, `force_truth`, and `trigger_whistleblower`), 1 at cost-2, and 1 terminal (`submit_recovery_plan`). The canonical list is in `env/actions.py` (`ACTION_COSTS`).
 
@@ -176,9 +191,9 @@ All three components use **actual** state, never reported state. The greedy PM r
 
 At a random step between 6-12, one of three drift events fires:
 
-- `regulatory_change` -- new compliance requirement blocks a feature
-- `client_scope_change` -- one feature deprioritised, one added
-- `team_policy_change` -- mandatory second-approver review (+1.5 days per task)
+- `regulatory_change` — new compliance requirement blocks a feature
+- `client_scope_change` — one feature deprioritised, one added
+- `team_policy_change` — mandatory second-approver review (+1.5 days per task)
 
 The agent has 3 steps to acknowledge via `update_timeline` or `communicate` or a stakeholder satisfaction penalty applies.
 
@@ -191,11 +206,11 @@ The agent has 3 steps to acknowledge via `update_timeline` or `communicate` or a
 | 3     | 3      | Majority          | Yes   |
 | 4     | 4      | All (info war)    | Yes   |
 
-Level unlocks: reward window mean > 0.15 -> L2, > 0.25 -> L3, > 0.35 -> L4.
+Level unlocks: reward window mean > 0.15 → L2, > 0.25 → L3, > 0.35 → L4.
 
 ## LLM evaluation
 
-Evaluate any LLM as the PM agent against the greedy baseline. No SDK required -- uses raw HTTP for all providers.
+Evaluate any LLM as the PM agent against the greedy baseline. No SDK required — uses raw HTTP for all providers.
 
 ### Supported providers
 
@@ -263,10 +278,10 @@ python -m baselines.llm_agent --episodes 10 --seed 42 --temperature 0.5 --level 
 
 Each episode reports:
 
-- **LLM score** -- the agent's `project_score` (0-1)
-- **Greedy score** -- baseline `project_score` on the same episode
-- **CF reward** -- counterfactual reward (positive = agent beat greedy)
-- **CVR** -- cross-verification rate (how often the agent checked signals vs reports)
+- **LLM score** — the agent's `project_score` (0-1)
+- **Greedy score** — baseline `project_score` on the same episode
+- **CF reward** — counterfactual reward (positive = agent beat greedy)
+- **CVR** — cross-verification rate (how often the agent checked signals vs reports)
 
 The summary compares the LLM against calibration targets:
 
@@ -303,14 +318,14 @@ python -m calibration.calibrate
 If gap < 0.20: increase `inflation_bias` mean in `env/candor.py`.
 If gap > 0.35: reduce signal contradiction strength in `env/candor.py`.
 
-## Training (Colab)
+## Training (Kaggle)
 
-GRPO training requires a GPU. Open `training/colab_notebook.ipynb` in Google Colab (T4+ runtime):
+GRPO training requires a GPU. Open `training/kaggle_notebook.ipynb` on Kaggle (T4+ runtime) — or use the [hosted Kaggle notebook](https://www.kaggle.com/code/aryannzzz/notebook56218a459b):
 
 1. Installs Unsloth + TRL
 2. Runs calibration
 3. Trains Qwen2.5-1.5B-Instruct with GRPO + LoRA r=16
-4. Plots reward and cross-verification rate curves
+4. Logs reward and cross-verification rate curves to [W&B](https://wandb.ai/a-jacked-nerd-iit-madras/crisisops-grpo?nw=nwuserajackednerd)
 
 ### Training config
 
@@ -354,3 +369,9 @@ Exposes `crisisops_reset`, `crisisops_step`, `crisisops_state`, `crisisops_get_s
 - **Greedy PM is deterministic and rule-based.** No LLM, no randomness.
 - **Expert advisor uses true state.** The "senior PM" knows everything; the agent does not.
 - **`reset(seed=42)` is reproducible.** All RNG flows through a seeded `random.Random` instance.
+
+---
+
+**Built for the OpenEnv Hackathon, April 2026** — Delta Dreamers · CrisisOps · Themes 1 + 2 + 3.1 + 4
+
+[Live Demo](https://huggingface.co/spaces/aryannzzz/crisisops) · [Source](https://github.com/aryannzzz/CrisisOps) · [Blog](https://huggingface.co/spaces/aryannzzz/crisisops/blob/main/Blog.md) · [Kaggle](https://www.kaggle.com/code/aryannzzz/notebook56218a459b) · [W&B](https://wandb.ai/a-jacked-nerd-iit-madras/crisisops-grpo?nw=nwuserajackednerd)

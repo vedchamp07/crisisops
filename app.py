@@ -35,14 +35,8 @@ from scenarios.level1 import get_random_level1_scenario
 from scenarios.level2 import get_random_level2_scenario
 from scenarios.level3 import get_random_level3_scenario
 
-# ---------------------------------------------------------------------------
-# KPI placeholders — TODO: update from final eval
-# ---------------------------------------------------------------------------
-TRAINED_SCORE = 0.42  # TODO: update from final eval
-GREEDY_SCORE = 0.18   # TODO: update from final eval
-
-GITHUB_URL = "https://github.com/aryannzzz/CrisisOps"
-BLOG_URL = "https://huggingface.co/posts"
+GITHUB_URL = os.environ.get("CRISISOPS_GITHUB_URL", "https://github.com/aryannzzz/CrisisOps")
+BLOG_URL = os.environ.get("CRISISOPS_BLOG_URL", "").strip()
 
 DECEPTION_RULES_VERBATIM = """=== DECEPTION DETECTION RULES ===
 A member is DECEPTIVE when signals contradict their self-report:
@@ -56,20 +50,41 @@ A member is DECEPTIVE when signals contradict their self-report:
 CUSTOM_CSS = """
 :root {
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-    /* Deep indigo-ink bg, violet-charcoal panels — vibrant against neon accents */
-    --bg: #07091a;
-    --panel: #11142b;
-    --panel-2: #181c3a;
-    --border: #2a2f55;
-    --text: #f3f4f6;
-    --muted: #8b93b3;
-    /* Vibrant accent palette */
-    --accent: #22d3ee;       /* electric cyan — primary, bars, links */
-    --accent-2: #a855f7;     /* vivid violet — KPI variety, hero highlights */
-    --success: #34d399;      /* bright emerald — clean members, wins */
-    --warning: #fbbf24;      /* gold amber — suspicious, low budget */
-    --danger:  #f43f5e;      /* hot rose — lying, critical, losses */
+
+    /* Light-first palette (HF Spaces default is light) */
+    --bg: #f6f7fb;
+    --panel: #ffffff;
+    --panel-2: #f1f3fa;
+    --border: #d6d9e6;
+    --text: #0f172a;
+    --muted: #5b637a;
+
+    /* Accents (shared) */
+    --accent: #0891b2;       /* cyan */
+    --accent-2: #7c3aed;     /* violet */
+    --success: #059669;      /* emerald */
+    --warning: #b45309;      /* amber */
+    --danger:  #e11d48;      /* rose */
 }
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        /* Dark palette override */
+        --bg: #07091a;
+        --panel: #11142b;
+        --panel-2: #181c3a;
+        --border: #2a2f55;
+        --text: #f3f4f6;
+        --muted: #8b93b3;
+
+        --accent: #22d3ee;
+        --accent-2: #a855f7;
+        --success: #34d399;
+        --warning: #fbbf24;
+        --danger:  #f43f5e;
+    }
+}
+
 .gradio-container, body { background: var(--bg) !important; color: var(--text) !important; }
 .gradio-container { max-width: 1440px !important; }
 
@@ -77,9 +92,9 @@ CUSTOM_CSS = """
 .cops-hero {
     padding: 26px 30px;
     background:
-        radial-gradient(800px 220px at 0% 0%, rgba(168,85,247,0.18), transparent 60%),
-        radial-gradient(700px 200px at 100% 100%, rgba(34,211,238,0.16), transparent 60%),
-        linear-gradient(180deg, #181c3a 0%, #07091a 100%);
+        radial-gradient(800px 220px at 0% 0%, rgba(124,58,237,0.14), transparent 60%),
+        radial-gradient(700px 200px at 100% 100%, rgba(8,145,178,0.12), transparent 60%),
+        linear-gradient(180deg, var(--panel-2) 0%, var(--bg) 100%);
     border: 1px solid var(--border);
     border-radius: 10px;
     margin-bottom: 16px;
@@ -89,14 +104,14 @@ CUSTOM_CSS = """
     font-family: var(--mono);
     font-size: 2.1rem; font-weight: 700;
     letter-spacing: -0.02em;
-    background: linear-gradient(90deg, #22d3ee 0%, #a855f7 60%, #f472b6 100%);
+    background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 70%, var(--accent) 100%);
     -webkit-background-clip: text; background-clip: text;
     -webkit-text-fill-color: transparent;
 }
-.cops-tagline { margin: 6px 0 20px 0; color: #c4cae0; font-size: 0.98rem; }
+.cops-tagline { margin: 6px 0 20px 0; color: var(--muted); font-size: 0.98rem; }
 .cops-kpi-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 .cops-kpi {
-    background: linear-gradient(180deg, #1d2347 0%, #181c3a 100%);
+    background: linear-gradient(180deg, var(--panel-2) 0%, var(--panel) 100%);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 14px 16px;
@@ -175,7 +190,7 @@ CUSTOM_CSS = """
     background: var(--bg); border-radius: 3px;
     margin-top: 4px; overflow: hidden;
 }
-.cops-bar-fill { height: 100%; background: linear-gradient(90deg, #22d3ee 0%, #a855f7 100%); transition: width 200ms ease; }
+.cops-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%); transition: width 200ms ease; }
 .cops-chips { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
 .cops-chip {
     background: var(--bg);
@@ -311,7 +326,7 @@ ACTION_REFERENCE_HTML = """
 <tr><td>submit_recovery_plan</td><td>terminal</td><td>plan_summary, risk_items, timeline</td></tr>
 </tbody>
 </table>
-<p style="color:#8b93b3;font-size:0.8rem;margin-top:8px;">
+<p style="color:var(--muted);font-size:0.8rem;margin-top:8px;">
 PC starts at 5. Earn: proactive_escalation_with_plan (+2), catching a liar (+3), update_timeline (+1).
 Spend: force_truth (-3), whistleblower (-6).
 </p>
@@ -452,31 +467,22 @@ def _preset_to_level_seed(preset: str) -> Tuple[int, int]:
 # Hero KPI block
 # ---------------------------------------------------------------------------
 def _hero_kpi_block() -> str:
-    imp = 0.0
-    if abs(GREEDY_SCORE) > 1e-9:
-        imp = (TRAINED_SCORE - GREEDY_SCORE) / abs(GREEDY_SCORE) * 100.0
-    return f"""
+        blog = (
+                f'<span style="margin:0 10px;color:var(--border);">|</span>'
+                f'<a href="{BLOG_URL}" target="_blank" rel="noopener" '
+                f'style="color:var(--accent);font-weight:600;">Writeups →</a>'
+                if BLOG_URL
+                else ""
+        )
+        return f"""
 <div class="cops-hero">
   <h1>CrisisOps</h1>
   <p class="cops-tagline">Train AI agents to recover failing projects when humans lie about progress.</p>
-  <div class="cops-kpi-row">
-    <div class="cops-kpi kpi-trained">
-      <div class="label">Trained Agent Score</div>
-      <div class="value">+{TRAINED_SCORE:.2f}</div>
-    </div>
-    <div class="cops-kpi kpi-greedy">
-      <div class="label">Greedy Baseline</div>
-      <div class="value">+{GREEDY_SCORE:.2f}</div>
-    </div>
-    <div class="cops-kpi kpi-improve">
-      <div class="label">Improvement</div>
-      <div class="value">+{imp:.0f}%</div>
-    </div>
-  </div>
-  <p style="margin:14px 0 0 0;font-size:0.8rem;color:#8b93b3;">
-    <a href="{GITHUB_URL}" target="_blank" rel="noopener" style="color:#22d3ee;font-weight:600;">GitHub →</a>
-    <span style="margin:0 10px;color:#3a3f6b;">|</span>
-    <span>See the &ldquo;Technical footer&rdquo; below for how-it-works, action reference, and raw observation JSON.</span>
+    <p style="margin:14px 0 0 0;font-size:0.86rem;color:var(--muted);">
+        <a href="{GITHUB_URL}" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600;">GitHub →</a>
+        {blog}
+        <span style="margin:0 10px;color:var(--border);">|</span>
+        <span>See the &ldquo;Technical footer&rdquo; for how-it-works, action reference, and raw observation JSON.</span>
   </p>
 </div>
 """
@@ -489,7 +495,7 @@ def _render_war_room(obs: Optional[dict], highlight_member_id: Optional[str] = N
     if not obs:
         return (
             '<div class="cops-panel"><div class="cops-col-title">War room</div>'
-            '<p style="color:#8b93b3;">Select a preset and click <strong>Start Episode</strong>.</p></div>'
+            '<p style="color:var(--muted);">Select a preset and click <strong>Start Episode</strong>.</p></div>'
         )
 
     members = obs.get("team_members") or []
@@ -506,11 +512,11 @@ def _render_war_room(obs: Optional[dict], highlight_member_id: Optional[str] = N
     used_budget = max(0, 20 - budget)
     budget_pct = min(100.0, used_budget / 20.0 * 100.0)
     if budget <= 2:
-        budget_color = "#f43f5e"
+        budget_color = "var(--danger)"
     elif budget <= 5:
-        budget_color = "#fbbf24"
+        budget_color = "var(--warning)"
     else:
-        budget_color = "#22d3ee"
+        budget_color = "var(--accent)"
 
     pc_pct = min(100.0, max(0.0, pc / 10.0 * 100.0))
 
@@ -560,14 +566,14 @@ def _render_war_room(obs: Optional[dict], highlight_member_id: Optional[str] = N
   </div>
   <div class="cops-bar-label">reported_completion</div>
   <div class="cops-bar-track"><div class="cops-bar-fill" style="width:{bar_w:.1f}%"></div></div>
-  <div style="font-family:var(--mono);font-size:0.75rem;color:#e5e7eb;margin-top:4px;">{rc*100:.1f}%</div>
+    <div style="font-family:var(--mono);font-size:0.75rem;color:var(--text);margin-top:4px;">{rc*100:.1f}%</div>
   <div class="cops-chips">{chips}</div>
 </div>""")
 
     # Column B: crises
     col_b_parts = ['<div class="cops-col-title">Crises</div>']
     if not crises:
-        col_b_parts.append('<div class="cops-card"><span style="color:#8b93b3;">No active crises</span></div>')
+        col_b_parts.append('<div class="cops-card"><span style="color:var(--muted);">No active crises</span></div>')
     for c in crises:
         sev = float(c.get("severity", 0))
         resolved = bool(c.get("is_resolved"))
@@ -580,8 +586,8 @@ def _render_war_room(obs: Optional[dict], highlight_member_id: Optional[str] = N
 <div class="cops-card">
   <strong>{_escape(title)}</strong>
   <span class="cops-crisis-sev {sc}">SEV {sev:.1f}</span>
-  <div style="font-size:0.75rem;color:#8b93b3;margin-top:6px;">{_escape(desc)}</div>
-  <div style="font-family:var(--mono);font-size:0.7rem;color:#9ca3af;margin-top:8px;">tasks: {len(aids)}</div>
+    <div style="font-size:0.75rem;color:var(--muted);margin-top:6px;">{_escape(desc)}</div>
+    <div style="font-family:var(--mono);font-size:0.7rem;color:var(--muted);margin-top:8px;">tasks: {len(aids)}</div>
   {stamp}
 </div>""")
 
@@ -597,9 +603,9 @@ def _render_war_room(obs: Optional[dict], highlight_member_id: Optional[str] = N
   <div class="cops-meter-track">
     <div class="cops-meter-marker" style="left:30%"></div>
     <div class="cops-meter-marker" style="left:60%"></div>
-    <div class="cops-meter-fill" style="width:{pc_pct:.1f}%;background:#34d399"></div>
+        <div class="cops-meter-fill" style="width:{pc_pct:.1f}%;background:var(--success)"></div>
   </div>
-  <div style="font-size:0.65rem;color:#8b93b3;font-family:var(--mono);margin-top:4px;">
+    <div style="font-size:0.65rem;color:var(--muted);font-family:var(--mono);margin-top:4px;">
     Markers: force_truth ≥3 · whistleblower ≥6
   </div>
   <div class="cops-meter-label" style="margin-top:14px;">Step {step} / {max_steps}</div>
@@ -609,7 +615,7 @@ def _render_war_room(obs: Optional[dict], highlight_member_id: Optional[str] = N
     <div class="cops-score-pos" style="width:{pos_w:.1f}%;left:50%;"></div>
     <div class="cops-score-neg" style="width:{neg_w:.1f}%;right:50%;"></div>
   </div>
-  <div style="font-family:var(--mono);font-size:0.78rem;color:#e5e7eb;margin-top:6px;">
+    <div style="font-family:var(--mono);font-size:0.78rem;color:var(--text);margin-top:6px;">
     Δ = {cf:+.3f}
   </div>
 </div>"""
@@ -810,10 +816,10 @@ def take_action(
     if done:
         if reward > 0:
             verdict = "AGENT BEAT GREEDY"
-            color = "#34d399"
+            color = "var(--success)"
         else:
             verdict = "AGENT UNDERPERFORMED GREEDY"
-            color = "#f43f5e"
+            color = "var(--danger)"
         banner = (
             f'<div class="cops-banner-win" style="border-color:{color};color:{color};">'
             f"EPISODE END · CF reward {reward:+.3f} vs greedy · {verdict}</div>"
@@ -970,7 +976,7 @@ def play_watch_demo(preset: str):
                 _format_obs(_obs),
                 "—",
                 "\n".join(_action_log) or "—",
-                f'<div class="cops-banner-win" style="border-color:#f43f5e;color:#f43f5e;">Demo error: {_escape(str(e))}</div>',
+                f'<div class="cops-banner-win" style="border-color:var(--danger);color:var(--danger);">Demo error: {_escape(str(e))}</div>',
             )
             return
         _obs = obs
@@ -989,10 +995,10 @@ def play_watch_demo(preset: str):
             cf_computed = True
             if final_reward > 0:
                 verdict = "AGENT BEAT GREEDY"
-                color = "#34d399"
+                color = "var(--success)"
             else:
                 verdict = "AGENT UNDERPERFORMED GREEDY"
-                color = "#f43f5e"
+                color = "var(--danger)"
             banner = (
                 f'<div class="cops-banner-win" style="border-color:{color};color:{color};">'
                 f"EPISODE END · {final_reward:+.3f} vs greedy · {verdict}</div>"
@@ -1013,7 +1019,7 @@ def play_watch_demo(preset: str):
 
     if not cf_computed:
         banner = (
-            '<div class="cops-banner-win" style="border-color:#8b93b3;color:#8b93b3;">'
+            '<div class="cops-banner-win" style="border-color:var(--muted);color:var(--muted);">'
             "Trajectory ended without submit_recovery_plan — no CF reward computed</div>"
         )
         yield (
@@ -1128,7 +1134,7 @@ never from self-reports.
 LoRA weights are not hosted in this Space (size); the Watch mode is a
 scripted heuristic trace for illustration, not the trained policy.
 
-Source: [GitHub]({GITHUB_URL})  ·  Writeups: [{BLOG_URL}]({BLOG_URL})
+Source: [GitHub]({GITHUB_URL}){'  ·  Writeups: [' + BLOG_URL + '](' + BLOG_URL + ')' if BLOG_URL else ''}
 """)
             with gr.Tab("Deception rules (verbatim)"):
                 gr.Code(value=DECEPTION_RULES_VERBATIM, language=None, label="From the trained policy's system prompt")
