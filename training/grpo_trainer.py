@@ -163,93 +163,182 @@ Keep reassigning tasks every turn until one of these conditions is met.
 """
 
 
-def _generate_method_body_insert_index(source: str) -> Optional[int]:
-    """Byte index right after ``_generate_and_score_completions`` signature ``:\\n`` (start of body)."""
-    key = "def _generate_and_score_completions"
-    idx = source.find(key)
-    if idx < 0:
+def _unsloth_grpo_cache_file_paths() -> list:
+    """Plausible on-disk Unsloth GRPO caches (Colab: cwd, clone root, and /content/crisisops)."""
+    from pathlib import Path
+
+    cands = [
+        Path.cwd() / "unsloth_compiled_cache" / "UnslothGRPOTrainer.py",
+        Path(__file__).resolve().parent.parent / "unsloth_compiled_cache" / "UnslothGRPOTrainer.py",
+        Path("/content/crisisops") / "unsloth_compiled_cache" / "UnslothGRPOTrainer.py",
+    ]
+    out = []
+    seen: set = set()
+    for p in cands:
+        try:
+            r = p.resolve()
+        except OSError:
+            continue
+        if r.is_file() and r not in seen:
+            seen.add(r)
+            out.append(r)
+    return out
+
+
+def _build_has_images_inject() -> str:
+    return (
+        f"        {_CACHE_PATCH_HAS_IMAGES}\n"
+        "        has_images = False\n"
+        "        images = None\n"
+    )
+
+
+def _patch_unsloth_generate_source(s: str) -> Optional[str]:
+    """
+    Return updated source, the same if already patched, or None if the layout
+    is unrecognized.
+    """
+    import re
+
+    text = s.replace("\r\n", "\n")
+    mkey = re.search(
+        r"^\s*def _generate_and_score_completions\s*\(",
+        text,
+        re.MULTILINE,
+    )
+    if not mkey:
         return None
-    p = source.find("(", idx)
-    if p < 0:
-        return None
-    depth = 0
-    k = p
-    while k < len(source):
-        ch = source[k]
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-            if depth == 0:
-                k += 1
+    m_start = mkey.start()
+    # End at the next 4-space class method; inner `def` uses 8+ spaces, so it won't match.
+    m_end = text.find("\n    def ", m_start + 50)
+    if m_end < 0:
+        m_end = len(text)
+    block = text[m_start:m_end]
+    if _CACHE_PATCH_HAS_IMAGES in block and "has_images = False" in block:
+        return text
+
+    inject = _build_has_images_inject()
+    m_sig = re.search(r"\)\s*(?:->\s*[^\n]+?)?\s*:\n", block)
+    ins_rel: Optional[int] = None
+    if m_sig:
+        ins_rel = m_sig.end()
+    if ins_rel is None or ins_rel > 12000:
+        for pat in (
+            "\n        max_left_pad = None",
+            "\n        device = self.accelerator.device",
+            "\n        mode = \"train\" if self.model.training",
+            "\n        prompts = [x[\"prompt\"]",
+        ):
+            a = block.find(pat)
+            if a >= 0 and _CACHE_PATCH_HAS_IMAGES not in block[:a]:
+                ins_rel = a + 1
                 break
-        k += 1
-    else:
+    if ins_rel is None:
         return None
-    colon_nl = source.find(":\n", k)
-    if colon_nl < 0:
-        return None
-    return colon_nl + 2
+    if _CACHE_PATCH_HAS_IMAGES in block[: min(ins_rel, len(block))]:
+        return text
+    new_block = block[:ins_rel] + inject + block[ins_rel:]
+    return text[:m_start] + new_block + text[m_end:]
 
 
 def _maybe_patch_unsloth_grpo_cache_file() -> str:
     """
     Unsloth's generated UnslothGRPOTrainer can reference ``has_images`` / ``images`` in an
-    except-path before assignment. Patch the cache file so text-only runs work.
-
-    Uses the end of the method signature (balanced ``()`` + first ``:\\n``) so it matches
-    Unsloth layouts where the body starts with ``device =``, ``max_left_pad = None``, etc.
+    try/except before assignment. Patch the cache on disk. Colab may keep **two** copies
+    of the file or **regenerate** it; we patch every known path and reload Python modules
+    in ``prepare_unsloth_grpo_colab()``.
 
     Returns:
         ``\"patched\"`` | ``\"noop\"`` | ``\"missing\"`` | ``\"failed\"``
     """
-    from pathlib import Path
-
-    roots = (Path.cwd(), Path(__file__).resolve().parent.parent)
-    paths = []
-    seen = set()
-    for r in roots:
-        p = (r / "unsloth_compiled_cache" / "UnslothGRPOTrainer.py").resolve()
-        if p.is_file() and p not in seen:
-            seen.add(p)
-            paths.append(p)
+    paths = _unsloth_grpo_cache_file_paths()
     if not paths:
         return "missing"
 
-    inject = (
-        f"        {_CACHE_PATCH_HAS_IMAGES}\n"
-        "        has_images = False\n"
-        "        images = None\n"
-    )
+    any_patched = False
+    any_unhandled = False
     for p in paths:
         try:
-            s = p.read_text(encoding="utf-8")
+            s0 = p.read_text(encoding="utf-8")
         except OSError:
+            any_unhandled = True
             continue
-        ins = _generate_method_body_insert_index(s)
-        if ins is None:
-            return "failed"
-        head = s[ins : ins + 400]
-        if _CACHE_PATCH_HAS_IMAGES in head and "has_images = False" in head:
-            return "noop"
+        new_s = _patch_unsloth_generate_source(s0)
+        if new_s is None:
+            if _CACHE_PATCH_HAS_IMAGES in s0 or "has_images = False" in s0:
+                pass
+            else:
+                any_unhandled = True
+            continue
+        if new_s == s0:
+            continue
         try:
-            p.write_text(s[:ins] + inject + s[ins:], encoding="utf-8")
+            p.write_text(new_s, encoding="utf-8")
+            any_patched = True
         except OSError:
-            return "failed"
+            any_unhandled = True
+    if any_patched:
         return "patched"
-    return "missing"
+    if any_unhandled:
+        return "failed"
+    return "noop"
 
 
-def prepare_unsloth_grpo_colab() -> None:
-    """Call after Unsloth wrote ``unsloth_compiled_cache/``, before importing ``trl`` GRPOTrainer."""
+def _reload_unsloth_grpo_trainer_modules() -> None:
+    """If the cache was patched, reload compiled trainer + trl so classes pick it up."""
+    import importlib
+
+    for n in [x for x in list(sys.modules) if x.endswith("UnslothGRPOTrainer")]:
+        try:
+            importlib.reload(sys.modules[n])
+        except Exception:
+            pass
+    n2 = "trl.trainer.grpo_trainer"
+    if n2 in sys.modules:
+        try:
+            importlib.reload(sys.modules[n2])
+        except Exception:
+            pass
+
+
+def _rebind_unsloth_generate_from_module(trainer: Any) -> None:
+    """
+    If the on-disk Unsloth cache was patched *after* ``GRPOTrainer`` was first imported, the
+    in-memory class may still run old bytecode. Re-bind ``_generate_and_score_completions``
+    from the reloaded class onto this trainer instance.
+    """
+    import importlib
+    import types
+
+    try:
+        cls = trainer.__class__
+        mname = getattr(cls, "__module__", None)
+        if not mname or mname not in sys.modules:
+            return
+        mod = importlib.reload(sys.modules[mname])
+        ncls = getattr(mod, cls.__name__, None)
+        if ncls is None or not hasattr(ncls, "_generate_and_score_completions"):
+            return
+        fn = ncls._generate_and_score_completions
+        trainer._generate_and_score_completions = types.MethodType(  # type: ignore[assignment, method-assign]
+            fn, trainer
+        )
+    except Exception:
+        return
+
+
+def prepare_unsloth_grpo_colab() -> str:
+    """Patch Unsloth's compiled GRPO trainer (has_images / images) and reload modules. Returns status."""
     status = _maybe_patch_unsloth_grpo_cache_file()
     if status == "patched":
-        print("[CrisisOps] Patched UnslothGRPOTrainer cache (has_images / images).")
+        _reload_unsloth_grpo_trainer_modules()
+        print("[CrisisOps] Patched UnslothGRPOTrainer cache (has_images / images) and reloaded modules.")
     elif status == "failed":
         print(
             "[CrisisOps] WARN: could not patch unsloth_compiled_cache/UnslothGRPOTrainer.py "
             "for has_images/images. Text-only GRPO may raise NameError."
         )
+    return status
 
 
 def _truncate_with_protected_tokens_unsloth(
@@ -300,6 +389,10 @@ def patch_unsloth_grpo_trainer_vlm_attrs(trainer: Any) -> None:
       (NameError inside `_generate_and_score_completions`).
     - `pad_token` missing on the trainer while stripping leading pad from decoded prompts.
     """
+    # Re-patch the compiled file (Unsloth may have regenerated) and re-bind the method
+    # on this instance so the trainer does not run stale bytecode.
+    prepare_unsloth_grpo_colab()
+    _rebind_unsloth_generate_from_module(trainer)
     for _name in ("image_token_id", "vision_start_token_id", "vision_end_token_id"):
         if not hasattr(trainer, _name):
             setattr(trainer, _name, None)
