@@ -6,7 +6,7 @@
 
 > *In many benchmark settings, observations are objective and hard to fake. In CrisisOps, the agent must work with human self-reports that can be strategically misleading.*
 
-We built this environment because we kept thinking about a problem that doesn't exist in any RL benchmark we know of. The idea emerged through conversations with many people in our network, including a teammate's father at Microsoft, who pointed us toward the recurring theme of software project failures, which genuinely interested us in developing a solution under the domain. After researching in that domain specifically, we gradually converged on a deceptive yet simple question: what happens when the information your agent receives is **deliberately falsified** by the very people generating it??
+We built this environment because we kept thinking about a problem that doesn't exist in any RL benchmark we know of. The idea emerged through conversations with many people in our network, including a teammate's father at Microsoft, who pointed us toward the recurring theme of software project failures, which genuinely interested us in developing a solution under the domain. After researching in that domain specifically, we gradually converged on a deceptively simple question: what happens when the information your agent receives is **deliberately falsified** by the very people generating it?
 
 From our research, every standard environment, like Atari, MuJoCo, ALFWorld, and even the enterprise tool-use benchmarks, assumes the agent faces noisy or sparse information. None of them assume the agent faces *strategic adversaries who have a coherent reason to mislead it*. That's a fundamentally different problem class, and it maps directly onto one of the most common failures in real-world AI deployment.
 
@@ -15,15 +15,15 @@ CrisisOps trains a 1.5B-parameter LLM to act as a crisis-mode project manager re
 <img width="742" height="430" alt="PM Agent" src="https://github.com/user-attachments/assets/d1a13021-3089-4c99-ab99-bf72f99d008d" />
 
 
-**[🚀 Live Demo](https://huggingface.co/spaces/aryannzzz/crisisops) · [📓 One-click Colab](https://colab.research.google.com/github/vedchamp07/crisisops/blob/Aryan/training/colab_notebook.ipynb) · [💻 Codebase](https://github.com/aryannzzz/CrisisOps)**
+**[🚀 Live Demo](https://huggingface.co/spaces/aryannzzz/crisisops) · [📓 Kaggle Notebook](https://www.kaggle.com/code/aryannzzz/notebook56218a459b) · [💻 Codebase](https://github.com/aryannzzz/CrisisOps)**
 
 ---
 
-## The problem we are trying to solve:
+## The problem we are trying to solve
 
 Imagine a software project in crisis. Payment APIs are failing. Client satisfaction is tanking. You're called in as the recovery PM with 20 action-budget points to spend before you need to submit an emergency recovery plan.
 
-The catch? Your data is only as good as your team’s honesty, and some are lying. These aren't random errors; they are strategic deceptions. To avoid scrutiny, an engineer with 0% progress will report 85%. They’ll stick to that story, coordinate with peers for 'proof,' and if they're ever exposed, they don't stop lying—they just get better at it.
+The catch? Your data is only as good as your team's honesty, and some are lying. These aren't random errors; they are strategic deceptions. To avoid scrutiny, an engineer with 0% progress will report 85%. They'll stick to that story, coordinate with peers for "proof," and if they're ever exposed, they don't stop lying — they just get better at it.
 
 The agent has to figure all of this out from indirect evidence: commit activity, ticket staleness, and what peers say about each other when asked. It then has to act, by reassigning the worst liars, communicating proactively with clients, escalating crises, all while managing a scarce action budget and a second resource called political capital.
 
@@ -123,12 +123,16 @@ The curriculum starts at level 1 (one honest member, one liar, one crisis) and u
 | LoRA rank | r=16, α=32 | Good balance of expressiveness vs. training speed |
 | Max sequence length | 4096 | Fits system prompt (~1400 tokens) + memory buffer + observation |
 | Generations per prompt | 4 | GRPO group size — enough variance for stable advantage estimation |
-| Training episodes | 300 | ~4–6h on T4; enough for L1 → L2 curriculum unlock |
+| Training episodes | 300–400 | ~4–6h on Kaggle T4; enough for L1 → L2 curriculum unlock |
 | Optimizer | AdamW, lr=2e-5 | Standard for LoRA fine-tuning |
 
-One honest note: 1.5B is small for this task. The expected final reward is in the +0.05 to +0.15 range, not near the oracle's +0.34. But the behavioural signature, higher cross-verification rate, faster liar identification and more proactive stakeholder communication is visible even when the absolute number is modest. We think that story is more interesting than raw scores: you can see *what* the model learned to do differently, not just *how much* the number went up.
+One honest note: 1.5B is small for this task. The expected final reward is in the +0.05 to +0.15 range, not near the oracle's +0.34. But the behavioural signature — higher cross-verification rate, faster liar identification, and more proactive stakeholder communication — is visible even when the absolute number is modest. We think that story is more interesting than raw scores: you can see *what* the model learned to do differently, not just *how much* the number went up.
 
-![Training Plots](https://github.com/vedchamp07/crisisops/blob/Shloka3/Training%20Plots.png)
+### Debugging GRPO: when the loss looks broken but isn't
+
+A note for anyone running GRPO themselves. Early in our run we saw `train/loss` flatlined at exactly 0 for 50+ steps and panicked. The issue turned out to be a known property of TRL's GRPOTrainer when `num_iterations=1`: with no buffered old policy, `coef_1 = exp(new − new.detach())` evaluates to 1.0, so the displayed loss reduces to `−mean(advantages)`, and group-centered advantages always sum to zero by construction. The displayed scalar is mathematically required to be ~0; gradients still flow correctly through the autograd graph.
+
+The actual learning signal lives in `train/reward` (and its rolling mean), not in `train/loss`. We also disabled the KL-to-reference penalty (`beta=0.0`) for the LoRA run, since the reference anchor was suppressing exploration in a regime where reward magnitudes are small.
 
 ---
 
@@ -143,6 +147,8 @@ Calibration (20 episodes, before training):
 | Oracle agent mean CF reward | +0.34 |
 
 The 0.34 learning gap between random and oracle gives GRPO meaningful room to work. Early training confirms the signal is real, batches show reward std ≈ 0.20–0.25 between the four GRPO completions, meaning real advantages are being computed and gradients are non-zero. Batches already show roughly 1–2 out of 4 completions scoring positive (above the greedy baseline), with that fraction increasing as training progresses.
+
+Training is ongoing as we ship this writeup. The Kaggle notebook saves `reward_log.json` and a smoothed training curve at the end of each run; both are available in the [linked notebook](https://www.kaggle.com/code/aryannzzz/notebook56218a459b) for reproduction.
 
 ---
 
@@ -184,8 +190,8 @@ To run training locally with the LLM adversary active (free, no API cost):
 ollama pull qwen2.5:3b && ollama serve &
 
 # Clone and set up
-git clone https://github.com/vedchamp07/crisisops
-cd crisisops && git checkout Aryan
+git clone https://github.com/aryannzzz/CrisisOps
+cd CrisisOps
 pip install -r requirements_train.txt
 
 # Sanity check
@@ -195,10 +201,12 @@ python -m calibration.calibrate
 python training/grpo_trainer.py
 ```
 
-Or open the [Colab notebook](https://colab.research.google.com/github/vedchamp07/crisisops/blob/Aryan/training/colab_notebook.ipynb), select T4 GPU, and run all cells. Training takes roughly 4–6 hours for 300 episodes.
+Or open the [Kaggle notebook](https://www.kaggle.com/code/aryannzzz/notebook56218a459b), select T4 GPU, and run all cells. Training takes roughly 4–6 hours for 300 episodes.
 
 ---
 
 *Built for the OpenEnv Hackathon, April 2026 · Qwen2.5-1.5B + GRPO + HuggingFace TRL*
 
 **Live demo** · [huggingface.co/spaces/aryannzzz/crisisops](https://huggingface.co/spaces/aryannzzz/crisisops)  
+**Source** · [github.com/aryannzzz/CrisisOps](https://github.com/aryannzzz/CrisisOps)  
+**Training notebook** · [kaggle.com/code/aryannzzz/notebook56218a459b](https://www.kaggle.com/code/aryannzzz/notebook56218a459b)
