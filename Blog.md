@@ -10,7 +10,7 @@ We built this environment because we kept thinking about a problem that doesn't 
 
 From our research, every standard environment, like Atari, MuJoCo, ALFWorld, and even the enterprise tool-use benchmarks, assumes the agent faces noisy or sparse information. None of them assume the agent faces *strategic adversaries who have a coherent reason to mislead it*. That's a fundamentally different problem class, and it maps directly onto one of the most common failures in real-world AI deployment.
 
-Moreover, crisisOps trains a 1.5B-parameter LLM to act as a crisis-mode project manager recovering a failing software project, while some of its own team members are actively lying about their progress to avoid accountability and save their jobs due to their lack of work.
+CrisisOps trains a 1.5B-parameter LLM to act as a crisis-mode project manager recovering a failing software project, while some of its team members are actively lying about their progress to avoid accountability.
 
 **[🚀 Live Demo](https://huggingface.co/spaces/aryannzzz/crisisops) · [📓 One-click Colab](https://colab.research.google.com/github/vedchamp07/crisisops/blob/Aryan/training/colab_notebook.ipynb) · [💻 Codebase](https://github.com/aryannzzz/CrisisOps)**
 
@@ -20,13 +20,11 @@ Moreover, crisisOps trains a 1.5B-parameter LLM to act as a crisis-mode project 
 
 Imagine a software project in crisis. Payment APIs are failing. Client satisfaction is tanking. You're called in as the recovery PM with 20 action-budget points to spend before you need to submit an emergency recovery plan.
 
-And here's the catch: everything you know about the project comes from asking your team in major cases. And some of them are lying (human nature).
-
-And engineers have this very special lying skills; they don't lie randomly, rather they lie *strategically*. A self-preservation engineer who is 0% done will report 85% done because they're afraid of being reassigned or put on a performance plan. They'll maintain that story across multiple conversations. They'll coordinate with an ally to back each other up. If you catch one of them, they'll adjust their story to be more careful next time.
+The catch? Your data is only as good as your team’s honesty, and some are lying. These aren't random errors; they are strategic deceptions. To avoid scrutiny, an engineer with 0% progress will report 85%. They’ll stick to that story, coordinate with peers for 'proof,' and if they're ever exposed, they don't stop lying—they just get better at it.
 
 The agent has to figure all of this out from indirect evidence: commit activity, ticket staleness, and what peers say about each other when asked. It then has to act, by reassigning the worst liars, communicating proactively with clients, escalating crises, all while managing a scarce action budget and a second resource called political capital.
 
-And the thing about our project is that it is not a toy problem. It is, in our view, one of the clearest unsolved capability gaps in current LLM behaviour: reasoning carefully under **adversarial information** from strategic actors with coherent motivations.
+Our project targets a critical, unsolved gap in LLM performance: reasoning through adversarial information provided by strategic actors. Current models struggle to maintain accuracy when their inputs are intentionally distorted by motivated parties.
 
 ---
 
