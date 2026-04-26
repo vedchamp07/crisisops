@@ -76,7 +76,7 @@ What makes CrisisOps different from any existing environment isn't the premise a
 
 ## Reward design: the counterfactual
 
-Designing the reward was the hardest part of this project. A naive reward like "did the project succeed?" is far too sparse and noisy. Most episodes succeed or fail for reasons outside the agent's control: initial crisis severity, scenario difficulty, random escalation. A reward that doesn't control for this teaches the agent to get lucky, not to get good.
+Designing the reward was the hardest part of this project. A naïve reward like "did the project succeed?" is far too sparse and noisy. Most episodes succeed or fail for reasons outside the agent's control: initial crisis severity, scenario difficulty, random escalation. A reward that doesn't control for this teaches the agent to get lucky, not to get good.
 
 We used a **counterfactual reward**. At the end of each episode, we replay a greedy PM baseline on an exact clone of the starting state. The greedy agent trusts all self-reports uncritically, communicates on a fixed schedule, and takes the first available action at each step. The agent's reward is:
 
@@ -116,6 +116,8 @@ The curriculum starts at level 1 (one honest member, one liar, one crisis) and u
 | Optimizer | AdamW, lr=2e-5 | Standard for LoRA fine-tuning |
 
 One honest note: 1.5B is small for this task. The expected final reward is in the +0.05 to +0.15 range, not near the oracle's +0.34. But the behavioural signature, higher cross-verification rate, faster liar identification and more proactive stakeholder communication is visible even when the absolute number is modest. We think that story is more interesting than raw scores: you can see *what* the model learned to do differently, not just *how much* the number went up.
+
+![Training Plots](https://github.com/vedchamp07/crisisops/blob/Shloka3/Training%20Plots.png)
 
 ---
 
