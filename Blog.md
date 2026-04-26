@@ -102,7 +102,7 @@ The calibration targets: random agent at −0.34, greedy baseline at 0.00 (by de
 
 We train with **GRPO (Group Relative Policy Optimisation)** via Hugging Face TRL on Qwen2.5-1.5B-Instruct with 4-bit LoRA (r=16, α=32). The training loop runs entirely inside the environment, and there is no static dataset and no precomputed rewards.
 
-GRPO feels like the right choice here because it doesn't require a separate value network. It generates G=4 completions per prompt, evaluates each against the environment, computes group-relative advantages, and pushes the model toward higher-reward completions. For a single-agent environment with a clear verifiable reward, this is cleaner and more memory-efficient than PPO.
+GRPO is the right choice here because it doesn't require a separate value network. It generates G=4 completions per prompt, evaluates each against the environment, computes group-relative advantages, and pushes the model toward higher-reward completions. For a single-agent environment with a clear verifiable reward, this is cleaner and more memory-efficient than PPO.
 
 The reward function runs a full episode rollout for each completion. The first action comes from the model. Every subsequent step uses a deterministic inner policy (`_inner_agent_action`), this makes the reward function fast enough to run at training time without calling the model on every inner step. The model gets credit for the full episode outcome its first action set in motion.
 
@@ -117,7 +117,7 @@ The curriculum starts at level 1 (one honest member, one liar, one crisis) and u
 | Training episodes | 300 | ~4–6h on T4; enough for L1 → L2 curriculum unlock |
 | Optimizer | AdamW, lr=2e-5 | Standard for LoRA fine-tuning |
 
-One note from our side: 1.5B is small for this task. The expected final reward is in the +0.05 to +0.15 range, not near the oracle's +0.34. But the behavioural signature, higher cross-verification rate, faster liar identification, more proactive stakeholder communication is visible even when the absolute number is modest. We think that story is more interesting than raw scores: you can see *what* the model learned to do differently, not just *how much* the number went up.
+One honest note: 1.5B is small for this task. The expected final reward is in the +0.05 to +0.15 range, not near the oracle's +0.34. But the behavioural signature, higher cross-verification rate, faster liar identification and more proactive stakeholder communication is visible even when the absolute number is modest. We think that story is more interesting than raw scores: you can see *what* the model learned to do differently, not just *how much* the number went up.
 
 ---
 
@@ -132,10 +132,6 @@ Calibration (20 episodes, before training):
 | Oracle agent mean CF reward | +0.34 |
 
 The 0.34 learning gap between random and oracle gives GRPO meaningful room to work. Early training confirms the signal is real, batches show reward std ≈ 0.20–0.25 between the four GRPO completions, meaning real advantages are being computed and gradients are non-zero. Batches already show roughly 1–2 out of 4 completions scoring positive (above the greedy baseline), with that fraction increasing as training progresses.
-
-Full training curves will be committed to this Space as the run completes. The Colab notebook saves `training_curve_final.png` and `reward_log.json` automatically.
-
-> **Expected trajectory:** episodes 0–50 mostly negative, 50–150 crossing zero, 150–300 stabilising around +0.10 to +0.15 at curriculum level 1–2.
 
 ---
 
@@ -157,9 +153,9 @@ The 16-action action space covers four cost tiers: 4 free query actions, 9 cost-
 
 ## Why this also matters outside the hackathon
 
-The skills this environment trains, which is triangulating truth from adversarial testimony, building a social trust model, managing two scarce resources simultaneously, detecting coordinated deception networks, don't exist in Atari, MuJoCo, ALFWorld, or any enterprise tool-use benchmark we are aware of.
+The skills this environment trains: triangulating truth from adversarial testimony, building a social trust model, managing two scarce resources simultaneously and detecting coordinated deception networks don't exist in Atari, MuJoCo, ALFWorld or any enterprise tool-use benchmark we are aware of.
 
-Models are good at following instructions when the information they receive is accurate. They are substantially worse at detecting when they're being strategically misled. CrisisOps is, to my knowledge, the first RL environment designed specifically to train and benchmark that capability.
+Models are good at following instructions when the information they receive is accurate. They are substantially worse at detecting when they're being strategically misled. CrisisOps is, to our knowledge, the first RL environment designed specifically to train and benchmark that capability.
 
 The benchmark angle is real too: you can evaluate any LLM's deception-detection ability by measuring its counterfactual reward on level 3-4 scenarios. The number you get is grounded in actual project recovery performance, not a judge's rubric or a held-out test set.
 
