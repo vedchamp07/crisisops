@@ -12,6 +12,9 @@ From our research, every standard environment, like Atari, MuJoCo, ALFWorld, and
 
 CrisisOps trains a 1.5B-parameter LLM to act as a crisis-mode project manager recovering a failing software project, while some of its team members are actively lying about their progress to avoid accountability.
 
+<img width="742" height="430" alt="PM Agent" src="https://github.com/user-attachments/assets/d1a13021-3089-4c99-ab99-bf72f99d008d" />
+
+
 **[🚀 Live Demo](https://huggingface.co/spaces/aryannzzz/crisisops) · [📓 One-click Colab](https://colab.research.google.com/github/vedchamp07/crisisops/blob/Aryan/training/colab_notebook.ipynb) · [💻 Codebase](https://github.com/aryannzzz/CrisisOps)**
 
 ---
@@ -25,6 +28,9 @@ The catch? Your data is only as good as your team’s honesty, and some are lyin
 The agent has to figure all of this out from indirect evidence: commit activity, ticket staleness, and what peers say about each other when asked. It then has to act, by reassigning the worst liars, communicating proactively with clients, escalating crises, all while managing a scarce action budget and a second resource called political capital.
 
 Our project targets a critical, unsolved gap in LLM performance: reasoning through adversarial information provided by strategic actors. Current models struggle to maintain accuracy when their inputs are intentionally distorted by motivated parties.
+
+<img width="662" height="301" alt="Liar Mechanism" src="https://github.com/user-attachments/assets/d22479e8-2bed-403a-bfc1-747db13c03fc" />
+
 
 ---
 
@@ -53,6 +59,8 @@ A self-preservation engineer at 0% done with candor=0.1 and inflation_bias=0.5 r
 | `self_preservation` | 0.10 – 0.40 | N(0.50, 0.10) | 30–70% over-report |
 
 The agent's job is to triangulate: cross-reference self-reports against observable signals, ask peers about each other, and build up a picture of who is actually progressing and who isn't.
+
+<img width="722" height="201" alt="level 1 2 3 4" src="https://github.com/user-attachments/assets/63ca5933-0caa-4fec-a80c-8c97ae9a5e0e" />
 
 ---
 
@@ -93,6 +101,9 @@ All three components are computed from **actual state, not reported state**. An 
 A positive reward means the agent outperformed a competent-but-naive baseline on the same scenario. The model cannot score well by exploiting the reward function without actually detecting deception better than the greedy PM does.
 
 The calibration targets: random agent at −0.34, greedy baseline at 0.00 (by definition), oracle at +0.34. The 0.68-point range gives GRPO enough room to find a meaningful learning signal. The three rubrics in `openenv.yaml` decompose the score exactly as above, making the reward composable and interpretable.
+
+<img width="727" height="312" alt="Training then deployment" src="https://github.com/user-attachments/assets/4dfdcf22-e6b2-4a65-bff3-32470581745c" />
+
 
 ---
 
