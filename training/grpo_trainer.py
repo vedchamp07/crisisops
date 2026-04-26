@@ -29,6 +29,8 @@ from typing import Any, Dict, List, Optional
 # CHG-2: module-level reward log accumulated during training for export
 _training_reward_log: List[Dict] = []  # [{episode, reward, level}]
 
+_CACHE_PATCH_HAS_IMAGES = "# crisisops_unsloth: has_images/images defaults (try/except NameError fix)"
+
 # ---------------------------------------------------------------------------
 # Training hyperparameters — all named constants, no magic numbers
 # ---------------------------------------------------------------------------
@@ -159,6 +161,59 @@ Only submit_recovery_plan when is_resolved=true for all crises, OR budget <= 5.
 Submitting early (before tasks complete) wastes the entire episode.
 Keep reassigning tasks every turn until one of these conditions is met.
 """
+
+
+def _maybe_patch_unsloth_grpo_cache_file() -> bool:
+    """
+    Unsloth's generated UnslothGRPOTrainer can reference ``has_images`` / ``images`` in an
+    except-path before assignment. Patch the cache file once so text-only runs work.
+
+    Must run after the cache file exists (typically after FastLanguageModel load) and
+    **before** the first import of ``GRPOTrainer`` from ``trl``.
+    """
+    import re
+    from pathlib import Path
+
+    candidates = [
+        Path.cwd() / "unsloth_compiled_cache" / "UnslothGRPOTrainer.py",
+        Path(__file__).resolve().parent.parent / "unsloth_compiled_cache" / "UnslothGRPOTrainer.py",
+    ]
+    for p in candidates:
+        if not p.is_file():
+            continue
+        try:
+            s = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if _CACHE_PATCH_HAS_IMAGES in s:
+            return False
+        # Unsloth emits either ``def foo(self, inputs):`` or a multi-line typed signature.
+        m = re.search(
+            r"def _generate_and_score_completions\(self, inputs\)\s*:\n(?:\s+\"\"\"[\s\S]*?\"\"\"\n)?",
+            s,
+        )
+        if not m:
+            m = re.search(
+                r"def _generate_and_score_completions\(\s*\n\s*self,\s*inputs[\s\S]*?\n\s*\)(?:\s*->[^\n]+)?\s*:\n"
+                r"(?:\s+\"\"\"[\s\S]*?\"\"\"\n)?",
+                s,
+            )
+        if not m:
+            continue
+        inject = (
+            f"        {_CACHE_PATCH_HAS_IMAGES}\n"
+            "        has_images = False\n"
+            "        images = None\n"
+        )
+        p.write_text(s[: m.end()] + inject + s[m.end() :], encoding="utf-8")
+        return True
+    return False
+
+
+def prepare_unsloth_grpo_colab() -> None:
+    """Call after Unsloth wrote ``unsloth_compiled_cache/``, before importing ``trl`` GRPOTrainer."""
+    if _maybe_patch_unsloth_grpo_cache_file():
+        print("[CrisisOps] Patched UnslothGRPOTrainer cache (has_images / images).")
 
 
 def _truncate_with_protected_tokens_unsloth(
@@ -502,7 +557,6 @@ def train(
 
     try:
         from unsloth import FastLanguageModel
-        from trl import GRPOTrainer, GRPOConfig
         from transformers import TrainerCallback
         import torch
     except ImportError as e:
@@ -601,6 +655,16 @@ def train(
         model.generate = _safe_generate
     except Exception:
         pass
+
+    # Unsloth cache must be patched before trl imports GRPOTrainer (compiled class).
+    prepare_unsloth_grpo_colab()
+    try:
+        from trl import GRPOTrainer, GRPOConfig
+    except ImportError as e:
+        raise ImportError(
+            f"Training requires trl: {e}\n"
+            "Install with: pip install trl==0.19.1"
+        ) from e
 
     os.makedirs(output_dir, exist_ok=True)
 
