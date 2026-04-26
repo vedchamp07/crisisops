@@ -21,9 +21,9 @@ An OpenEnv-compatible reinforcement learning environment for training a small LL
 | | |
 |---|---|
 | **Live Demo** | [HuggingFace Spaces](https://huggingface.co/spaces/aryannzzz/crisisops) |
-| **Training Notebook** | [Colab](https://colab.research.google.com/github/aryannzzz/crisisops/blob/main/training/colab_notebook.ipynb) |
-| **Blog Post** | [HuggingFace Post](https://huggingface.co/posts) *(add URL after publishing)* |
-| **Video Demo** | *(add YouTube URL after recording)* |
+| **Training Notebook** | [Colab (Aryan branch)](https://colab.research.google.com/github/vedchamp07/crisisops/blob/Aryan/training/colab_notebook.ipynb) |
+| **Blog Post** | [Hugging Face posts](https://huggingface.co/posts) |
+| **Video Demo** | Record and link from your hackathon submission materials. |
 
 > **"Logs don't lie. Engineers do."**  
 > CrisisOps trains AI project managers to detect deliberate human deception during software crises.

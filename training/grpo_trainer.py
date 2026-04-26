@@ -590,13 +590,9 @@ def train(
         def on_log(self, args, state, control, logs=None, **kwargs):
             nonlocal current_level
             logs = logs or {}
-            _reward_key = next(
-                (k for k in ("rewards/mean", "reward", "train/reward", "train/rewards")
-                 if k in (logs or {})),
-                None,
-            )
-            if _reward_key is not None:
-                batch_reward = float(logs[_reward_key])
+            # TRL 0.19.1 GRPOTrainer logs mean reward under "rewards"
+            if "rewards" in logs:
+                batch_reward = float(logs["rewards"])
                 # Approximate per-episode history from batch-level reward logs.
                 self._reward_history.extend([batch_reward] * GRPO_BATCH_SIZE)
 
