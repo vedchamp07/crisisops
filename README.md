@@ -37,12 +37,8 @@ An OpenEnv-compatible reinforcement learning environment for training a small LL
 
 ## 📊 Results
 
-
-
-```
 <img width="1273" height="685" alt="Training Plots" src="https://github.com/user-attachments/assets/8a7f23a6-b287-45b9-a292-ad12aecb2303" />
 
-```
 
 ![Training Curve](plots/reward_curve.png)
 
