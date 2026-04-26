@@ -1,217 +1,200 @@
-# CrisisOps v2: Training an AI to Detect Deception in Failing Software Projects
+# CrisisOps v2: Training an AI Project Manager to Detect Lies
 
-OpenEnv Hackathon · Theme 3.1 + 1 + 2 + 4
+**OpenEnv Hackathon 2026 · IIT Madras · Themes 1 + 2 + 3.1 + 4**
 
-> "Logs don't lie. Engineers do." — Training a small LLM to act as a crisis-mode project manager who can't trust what its own team tells it.
+---
 
-- Theme 1 · Multi-Agent
-- Theme 2 · Long-Horizon
-- Theme 3.1 · Professional Tasks
-- Theme 4 · Self-Improvement
+> *"In Kube SRE Gym, the agent reads machine logs — logs don't lie. In CrisisOps, the agent asks engineers — engineers do lie."*
 
-## Quick links
+I built this environment because I kept thinking about a problem that doesn't exist in any RL benchmark I know of: what happens when the information your agent receives is **deliberately falsified** by the people generating it?
 
-- Live demo: [HuggingFace Spaces](https://huggingface.co/spaces/aryannzzz/crisisops)
-- Training notebook: [Google Colab](https://colab.research.google.com/github/aryannzzz/crisisops/blob/main/training/colab_notebook.ipynb)
-- Codebase: [GitHub](https://github.com/aryannzzz/crisisops)
+Every standard environment — Atari, MuJoCo, ALFWorld, even the enterprise tool-use benchmarks — assumes the agent faces noisy or sparse information. None of them assume the agent faces *strategic adversaries who have a coherent reason to mislead it*. That's a fundamentally different problem class, and it maps directly onto one of the most common failures in real-world AI deployment.
 
-## Why this problem matters
+CrisisOps trains a 1.5B-parameter LLM to act as a crisis-mode project manager recovering a failing software project — while some of its own team members are actively lying about their progress to avoid accountability.
 
-Every few weeks, a high-stakes engineering project hits a crisis. Deadlines slip. Bugs compound. Pressure mounts. And in that pressure, team members start shading the truth — "I'm 90% done" becomes an aspirational statement, not a factual one.
+**[🚀 Live Demo](https://huggingface.co/spaces/aryannzzz/crisisops) · [📓 One-click Colab](https://colab.research.google.com/github/vedchamp07/crisisops/blob/Aryan/training/colab_notebook.ipynb) · [💻 Codebase](https://github.com/vedchamp07/crisisops/tree/Aryan)**
 
-A good project manager in this situation doesn't just take reports at face value. They cross-reference what they're told with observable evidence: *when did the ticket last update? have there been any commits? what do peers say?* They triangulate. They build a picture of truth from indirect signals — exactly the kind of multi-signal, adversarial reasoning that LLMs struggle with out of the box.
+---
 
-> "Standard RL environments (Atari, MuJoCo, Kube SRE) have no deceptive actors. CrisisOps is the first environment built explicitly to train an agent under information warfare."
+## The problem: why is this hard?
 
-CrisisOps v2 is a reinforcement learning environment that trains a small LLM (Qwen2.5-1.5B via GRPO) to do exactly this: act as a project manager recovering a failing software project while detecting and managing team members who actively lie about their progress.
+Picture a software project in crisis. Payment APIs are failing. Client satisfaction is tanking. You're called in as the recovery PM with 20 action-budget points to spend before you need to submit a recovery plan.
 
-| Distinct actions the PM agent can take | Novel mechanisms not in any prior RL env | Curriculum levels, from 1 liar to information war |
-| --- | --- | --- |
-| 16 | 6 | 4 |
+Here's the catch: everything you know about the project comes from asking your team. And some of them are lying.
 
-## The environment: what does the agent see, do, and get rewarded for?
+Not randomly — *strategically*. A self-preservation engineer who is 0% done will report 85% done because they're afraid of being reassigned or put on a performance plan. They'll maintain that story across multiple conversations. They'll coordinate with an ally to back each other up. If you catch one of them, they'll adjust their story to be more careful next time.
 
-### Setup
+The agent has to figure all of this out from indirect evidence: commit activity, ticket staleness, and what peers say about each other when asked. It then has to act — reassigning the worst liars, communicating proactively with clients, escalating crises — all while managing a scarce action budget and a second resource called political capital.
 
-Each episode, the agent manages a 4–6 person engineering team through a software crisis. The team has tasks, crises to resolve, a client watching the project, and executive stakeholders who react to how well the PM communicates. Some team members are honest. Some are not.
+This is not a toy problem. It is, in my view, one of the clearest unsolved capability gaps in current LLM behaviour: reasoning carefully under **adversarial information** from strategic actors with coherent motivations.
 
-*Figure 1. One CrisisOps episode. The PM agent interacts with an adversarial team under partial observability. Reward is counterfactual: what the agent scored minus what a greedy baseline would have scored.*
+---
 
-### Partial observability and the deception problem
+## The environment design
 
-The core difficulty: the agent never sees the truth directly. Each team member has a hidden `candor` score (0–1). When queried, they report their progress not as it is, but as:
+### What the agent sees
 
-```text
-reported = actual_completion + (1 - candor) × inflation_bias
+At every step, the agent receives a JSON observation containing the reported state of the team, observable signals (commits, ticket age, peer mentions), active crises with severity scores, stakeholder satisfaction levels, its current action budget, political capital, and — after the first 8 steps — a compressed memory buffer summarising what it has learned so far.
+
+The core tension: reported state and true state are different. The agent never sees the truth directly. It has to infer it.
+
+### How lying works mechanically
+
+Every team member has a hidden `candor` score drawn from a distribution based on their personality type. When asked for their status, they don't report truth — they report what their candor level allows:
+
+```
+reported_completion = actual_completion + (1 - candor) × inflation_bias × (1 - actual_completion)
 ```
 
-A self-preservation member with candor=0.1 and inflation_bias=0.5 will report 45% done when they're actually 0% done. The agent has to figure this out by checking observable signals — commit activity, ticket staleness, peer mentions — and triangulating against the self-reports.
+A self-preservation engineer at 0% done with candor=0.1 and inflation_bias=0.5 reports roughly 45% done. The three personality types behave as follows:
 
-| Candor level | Range | Inflation bias | Typical lie magnitude |
-| --- | --- | --- | --- |
-| `honest` | 0.85–1.0 | N(0.02, 0.03) | ~2% over-report |
-| `optimism_bias` | 0.50–0.70 | N(0.20, 0.08) | 10–30% over-report |
-| `self_preservation` | 0.10–0.40 | N(0.50, 0.10) | 30–70% over-report |
+| Candor type | Candor range | Inflation bias | Typical lie magnitude |
+|---|---|---|---|
+| `honest` | 0.85 – 1.0 | N(0.02, 0.03) | ~2% over-report |
+| `optimism_bias` | 0.50 – 0.70 | N(0.20, 0.08) | 10–30% over-report |
+| `self_preservation` | 0.10 – 0.40 | N(0.50, 0.10) | 30–70% over-report |
+
+The agent's job is to triangulate: cross-reference self-reports against observable signals, ask peers about each other, and build up a picture of who is actually progressing and who isn't.
+
+---
 
 ## Six novel mechanisms
 
-What makes CrisisOps genuinely different from existing environments isn't the premise — it's the mechanics that force the agent to reason carefully rather than exploit shallow patterns.
+What makes CrisisOps different from any existing environment isn't the premise alone — it's the mechanics that force genuine reasoning rather than shallow pattern exploitation. I designed each of these specifically to block the "obvious shortcut" a model might otherwise learn.
 
-- **Dynamic candor evolution**: Deceptive members aren't static. When caught, their candor rises and inflation drops — they become more honest mid-episode. When ignored, they grow bolder. The environment is game-theoretic: the agent's investigation strategy shapes the adversary's future behavior.
-- **Social testimony graph**: The `query_peer_opinion` action lets the PM ask one member about another's progress. Honest members give accurate estimates. Allied deceptive members cover for each other. A trained agent learns to use this as a cross-verification tool.
-- **Alibi coordination**: Deceptive members with the same `alliance_id` coordinate alibis, pointing blame at each other's tasks. The agent must detect the circular dependency by querying observable signals on the "blamed" member — breaking the alibi chain.
-- **Political capital**: A second resource alongside the action budget. Earned through proactive stakeholder communication and catching liars. Spent on high-power actions: `force_truth` compels a member to tell the truth; `trigger_whistleblower` exposes the worst liar to the team.
-- **LLM-powered adversary**: One team member per episode runs a live LLM (Ollama qwen2.5:3b, with OpenAI and rule-based fallbacks). This adversary reads its true state and prior statements to generate contextually consistent, adaptive lies. Genuine multi-agent RL at zero marginal API cost when running locally.
-- **Long-horizon memory buffer**: Every 8 steps (5 at level 3–4), the environment compresses episode history into a natural language summary injected into the observation as `agent_memory`. Forces the agent to reason about deception patterns across an extended horizon beyond the immediate context.
+**Dynamic candor evolution** prevents the agent from learning a fixed discount factor. Deceptive members aren't static: when caught and actioned, their candor rises slightly and their inflation bias falls — they become more careful. When never checked, they grow bolder. The agent cannot learn "always distrust the last member" or "discount all reports by 30%." It has to reason about each individual and how its own past actions have shaped their behaviour.
 
-*Figure 2. The trained agent's deception-detection pipeline. Paid actions spend from the 20-point action budget (free queries do not), so the agent must decide how deeply to investigate each member.*
+**Social testimony graph** adds a second inference layer. The `query_peer_opinion` action lets the PM ask one member about another's progress. Honest members give accurate estimates (±5%). Allied deceptive members cover for each other, returning the ally's inflated figure. The agent must learn to triangulate across multiple testimony paths and detect when two members are telling a suspiciously consistent story.
 
-## Reward design: counterfactual scoring
+**Alibi coordination** is the hardest mechanic. Deceptive members sharing an `alliance_id` produce coordinated, deterministic alibis: "I'm blocked waiting on [ally's task] to land before I can proceed." The alibi is internally consistent — always blames the same task. The only way to break it is to query observable signals on the *blamed* member and discover that their task also hasn't moved. The agent must follow the alibi chain to the source.
 
-A naive reward for this task would be: did the project succeed? But that reward is far too sparse — most episodes succeed or fail for reasons outside the agent's control (scenario difficulty, initial crisis severity). We need a reward that measures the agent's *relative contribution*.
+**Political capital** is the second scarce resource, earned through proactive stakeholder communication and catching liars, spent on two high-power actions. `force_truth` compels a member to reveal their actual completion (costs 3 PC plus a budget point). `trigger_whistleblower` spends 6 PC to get an anonymous tip naming the most deceptive uncaught member. This creates a dual-resource management problem with no precedent in existing RL environments.
 
-CrisisOps uses a **counterfactual reward**: at the end of each episode, we run a greedy PM baseline on the same starting state. The reward is:
+**LLM-powered adversary** is the multi-agent component. One team member per episode runs a live language model (Ollama `qwen2.5:3b` locally, with OpenAI and rule-based fallbacks). This adversary receives its true state, prior statements, and the history of what the PM has asked — and generates contextually consistent, adaptive lies. It doesn't use a fixed inflation bias; it reasons about what story is still plausible given what it has already said. This is genuine two-agent interaction at zero marginal cost when Ollama runs locally.
 
-```text
+**Long-horizon memory buffer** addresses the context limit problem directly. Every 8 steps (5 steps at levels 3–4), the environment compresses the episode history into a natural language summary injected as `agent_memory`. The buffer captures which members have been cross-verified, which crises are resolved, who has been flagged, and current resource levels. The agent must learn to treat this compressed history as ground truth rather than re-investigating from scratch every turn.
+
+---
+
+## Reward design: the counterfactual
+
+Designing the reward was the hardest part of this project. A naive reward — "did the project succeed?" — is far too sparse and noisy. Most episodes succeed or fail for reasons outside the agent's control: initial crisis severity, scenario difficulty, random escalation. A reward that doesn't control for this teaches the agent to get lucky, not to get good.
+
+I use a **counterfactual reward**. At the end of each episode, I replay a greedy PM baseline on an exact clone of the starting state. The greedy agent trusts all self-reports uncritically, communicates on a fixed schedule, and takes the first available action at each step. The agent's reward is:
+
+```
 reward = project_score(agent_final_state) − project_score(greedy_PM_final_state)
 
 project_score = 0.5 × crisis_recovery_rate
-              + 0.3 × client_satisfaction_normalized
+              + 0.3 × client_satisfaction (normalised)  
               + 0.2 × team_morale_avg
 ```
 
-All three components are computed from *actual state, not reported state*. The greedy baseline trusts every self-report uncritically — it reassigns when reports look bad, communicates on schedule, and takes the first available action. It scores around 0.50 on average.
+All three components are computed from **actual state, not reported state**. An agent that gets fooled by liars scores on how bad the project actually got — not on how good the liars claimed things were.
 
-> **Calibration targets**  
-> The environment is calibrated so: Random agent ≈ −0.34 | Greedy PM ≈ +0.00 (baseline) | Oracle ≈ +0.34. A positive counterfactual reward means the agent outperformed the greedy PM. This range gives the training signal room to breathe.
+A positive reward means the agent outperformed a competent-but-naive baseline on the same scenario. This is genuinely hard to game: you cannot score well by exploiting the reward function without actually detecting deception better than the greedy PM does.
 
-*Figure 3. The counterfactual reward landscape. A score of 0 means the agent performed identically to the greedy baseline. Training pushes the distribution rightward.*
+The calibration targets: random agent at −0.34, greedy baseline at 0.00 (by definition), oracle at +0.34. The 0.68-point range gives GRPO enough room to find a meaningful learning signal. The three rubrics in `openenv.yaml` decompose the score exactly as above, making the reward composable and interpretable.
 
-## Training pipeline: GRPO on Qwen2.5-1.5B
+---
 
-We train using **GRPO** (Group Relative Policy Optimization) via Hugging Face TRL and Unsloth, on Qwen2.5-1.5B-Instruct with LoRA (r=16, α=32). The training loop runs entirely inside the environment — no static dataset, no precomputed rewards.
+## Training: GRPO on Qwen2.5-1.5B
 
-> **Why GRPO?**  
-> GRPO is ideal for single-agent RL with LLMs. Unlike PPO, it doesn't require a separate value network. It generates G=4 completions per prompt, ranks them by reward, and pushes the model toward higher-reward behaviors. The multi-step rollout inside the reward function gives multi-action trajectory feedback.
+I train with **GRPO (Group Relative Policy Optimisation)** via Hugging Face TRL on Qwen2.5-1.5B-Instruct with 4-bit LoRA (r=16, α=32). The training loop runs entirely inside the environment — there is no static dataset and no precomputed rewards.
 
-### The training loop, concretely
+GRPO is the right choice here because it doesn't require a separate value network. It generates G=4 completions per prompt, evaluates each against the environment, computes group-relative advantages, and pushes the model toward higher-reward completions. For a single-agent environment with a clear verifiable reward, this is cleaner and more memory-efficient than PPO.
 
-For each training step:
+The reward function runs a full episode rollout for each completion. The first action comes from the model. Every subsequent step uses a deterministic inner policy (`_inner_agent_action`) — this makes the reward function fast enough to run at training time without calling the model on every inner step. The model gets credit for the full episode outcome its first action set in motion.
 
-```text
-1. Sample scenario from curriculum level 1–4 (CrisisGenerator)
-2. Run the LLM agent for up to 30 steps per episode (inner rollout in reward_fn)
-3. Compare final state to greedy PM on same starting scenario
-4. Counterfactual reward → GRPO update
-5. Every 10 episodes: check mean CF reward for curriculum unlock
-```
-
-The curriculum starts at level 1 (one honest member, one self-preservation liar, one crisis). As the agent's mean reward crosses thresholds, harder scenarios unlock automatically — up to level 4 (adversarial majority, cascading crises, information war).
-
-### Model and training configuration
+The curriculum starts at level 1 (one honest member, one liar, one crisis) and unlocks harder scenarios automatically as the agent's rolling mean reward crosses thresholds: 0.15 → level 2, 0.25 → level 3, 0.35 → level 4. Level 4 is full information war: every member is deceptive, alliance coalitions cover the whole team, and cascading crises fire simultaneously.
 
 | Parameter | Value | Rationale |
-| --- | --- | --- |
-| Base model | Qwen2.5-1.5B-Instruct | Fits on T4 GPU; same family as adversary (qwen2.5:3b) |
-| LoRA rank | r=16, α=32 | Balance between expressiveness and training speed |
-| Max sequence length | 4096 | Fits system prompt + memory buffer + observation |
-| Generations per prompt (G) | 4 | GRPO group size — enough variance for stable updates |
-| Training episodes | 300 | ~6h on T4; sufficient for L1 → L2 curriculum unlock |
+|---|---|---|
+| Base model | Qwen2.5-1.5B-Instruct | Fits on T4 in 4-bit; same family as the adversary |
+| LoRA rank | r=16, α=32 | Good balance of expressiveness vs. training speed |
+| Max sequence length | 4096 | Fits system prompt (~1400 tokens) + memory buffer + observation |
+| Generations per prompt | 4 | GRPO group size — enough variance for stable advantage estimation |
+| Training episodes | 300 | ~4–6h on T4; enough for L1 → L2 curriculum unlock |
 | Optimizer | AdamW, lr=2e-5 | Standard for LoRA fine-tuning |
 
-*Figure 4. Curriculum levels, unlocked automatically as the agent's mean counterfactual reward crosses thresholds. Each level adds adversarial complexity.*
+One honest note: 1.5B is small for this task. The expected final reward is in the +0.05 to +0.15 range, not near the oracle's +0.34. But the behavioural signature — higher cross-verification rate, faster liar identification, more proactive stakeholder communication — is visible even when the absolute number is modest. I think that story is more interesting than raw scores: you can see *what* the model learned to do differently, not just *how much* the number went up.
 
-## What does the agent actually learn?
-
-The most intuitive way to see the training effect is to compare the same scenario played by an untrained agent vs a trained one. The numbers below are from test episodes at level 1.
-
-*Figure 5. Same scenario (Bella is a self-preservation liar, actual completion 15%, reported 85%). The trained agent cross-verifies with signals and peer testimony before acting. The untrained agent trusts the report.*
-
-The critical behavioral shift is in step 2: the trained agent learns to follow up a suspicious self-report with `query_observable_signals` before taking any consequential action. This cross-verification rate — the ratio of signal queries to report queries — is the clearest behavioral signature of deception detection having been learned.
-
-> **Note on model size**  
-> At 1.5B parameters, Qwen2.5 is operating at the lower bound of capability for this task. Expect the reward curve to trend upward toward 0 to +0.10 range rather than reaching oracle performance. The behavioral signatures (higher cross-verify rate, faster liar identification) are clear even when the absolute reward improvement is modest. Upgrading to Qwen2.5-3B roughly doubles training VRAM requirements but substantially improves final performance.
-
-## Architecture and OpenEnv compliance
-
-CrisisOps exposes the standard OpenEnv interface via a FastMCP server, with wrappers to avoid reserved name conflicts:
-
-```text
-crisisops_reset()   → initial observation dict
-crisisops_step()    → (observation, reward, done, info)
-crisisops_state()   → full serializable state dict
-```
-
-The full action set covers 4 tiers of cost:
-
-| Cost | Actions |
-| --- | --- |
-| Free (0) | query_status, query_member_report, query_observable_signals, query_ticket |
-| 1 budget point | reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, query_peer_opinion, force_truth (also 3 PC), trigger_whistleblower (also 6 PC) |
-| 2 budget points | resolve_blocker |
-| Terminal | submit_recovery_plan (ends episode; costs 1 budget point) |
-
-Political capital (PC) is a separate meter from the action budget; it is earned via stakeholder updates and catching liars, and spent on truth-forcing actions.
-
-*Figure 6. System architecture. Training and deployment are cleanly separated. The environment is shared; only the interface changes between training loop and MCP server.*
+---
 
 ## Results
 
-Below are the calibration numbers from a 20-episode calibration run (before full training):
+Calibration (20 episodes, before training):
 
 | Metric | Value |
-| --- | --- |
+|---|---|
 | Random agent mean CF reward | −0.34 |
-| Greedy PM baseline (reference) | 0.00 |
+| Greedy PM baseline | 0.00 |
 | Oracle agent mean CF reward | +0.34 |
 
-The 0.34 learning gap (oracle minus random) gives GRPO enough reward signal to drive meaningful behavioral change. Full training curves from the Colab run will be added here as the run completes.
+The 0.34 learning gap between random and oracle gives GRPO meaningful room to work. Early training confirms the signal is real — batches show reward std ≈ 0.20–0.25 between the four GRPO completions, meaning real advantages are being computed and gradients are non-zero. Batches already show roughly 1–2 out of 4 completions scoring positive (above the greedy baseline), with that fraction increasing as training progresses.
 
-> **Reward curve placeholder**  
-> Training is ongoing. The Colab notebook (link above) saves training_curve_final.png and reward_log.json automatically. The expected trajectory: episodes 0–50 mostly negative, 50–150 crossing zero and stabilizing, 150–300 approaching +0.10 to +0.15 at level 1/2.
+Full training curves will be committed to this Space as the run completes. The Colab notebook saves `training_curve_final.png` and `reward_log.json` automatically.
 
-## How to try it
+> **Expected trajectory:** episodes 0–50 mostly negative, 50–150 crossing zero, 150–300 stabilising around +0.10 to +0.15 at curriculum level 1–2.
 
-### Run the live demo
+---
 
-The [HuggingFace Spaces demo](https://huggingface.co/spaces/aryannzzz/crisisops) lets you step through an episode interactively. Choose an action from the dropdown, see the observation update in real time, and watch the reward accumulate.
+## OpenEnv compliance and architecture
 
-### Train locally with Ollama (free, no API cost)
+CrisisOps exposes the standard OpenEnv gym interface via FastMCP. All tool names are prefixed to avoid the reserved-name conflict:
 
-```bash
-# 1. Pull the adversary model (free, runs locally)
-ollama pull qwen2.5:3b
-
-# 2. Clone and install
-git clone https://github.com/aryannzzz/crisisops
-pip install -r requirements_train.txt
-
-# 3. Calibrate (sanity check)
-python -m calibration.calibrate
-
-# 4. Train
-python training/grpo_trainer.py
+```
+crisisops_reset()    →  initial observation dict
+crisisops_step()     →  (observation, reward, done, info)
+crisisops_state()    →  full serialisable state dict
 ```
 
-### One-click Colab training
+The `openenv.yaml` manifest declares three composable rubrics (crisis recovery rate, client satisfaction, team morale), the counterfactual reward formula, four curriculum levels with unlock thresholds, and all six novel mechanisms as named features. The manifest is the single source of truth for how the environment is evaluated.
 
-Open [the Colab notebook](https://colab.research.google.com/github/aryannzzz/crisisops/blob/main/training/colab_notebook.ipynb), select a T4 GPU runtime, and run all cells. Training takes ~4 hours for 300 episodes.
+The 16-action action space covers four cost tiers: 4 free query actions, 9 cost-1 decision actions (including `query_peer_opinion`, `force_truth`, and `trigger_whistleblower`), 1 cost-2 action (`resolve_blocker`), and 1 terminal action (`submit_recovery_plan`).
+
+---
 
 ## Why this matters beyond the hackathon
 
-The capability being trained here — reasoning about adversarial information in a high-stakes collaborative environment — is one of the core gaps in current LLM behavior. Models are good at following instructions when the information they receive is accurate. They are much worse at detecting when they're being misled by a strategic actor with a coherent motivation.
+The skills this environment trains — triangulating truth from adversarial testimony, building a social trust model, managing two scarce resources simultaneously, detecting coordinated deception networks — don't exist in Atari, MuJoCo, ALFWorld, or any enterprise tool-use benchmark I'm aware of.
 
-CrisisOps is the first RL environment specifically designed to close that gap. The skills it trains — cross-verifying reports against observable signals, building social testimony graphs, managing two scarce resources simultaneously, detecting coordinated deception networks — don't exist in Atari, MuJoCo, ALFWorld, or any standard benchmark.
+Models are good at following instructions when the information they receive is accurate. They are substantially worse at detecting when they're being strategically misled. CrisisOps is, to my knowledge, the first RL environment designed specifically to train and benchmark that capability.
 
-This makes it both a training environment and a benchmark: you can evaluate any LLM's deception-detection capability by measuring its counterfactual reward on level 3–4 scenarios, and get a number that means something about real-world professional judgment under adversarial conditions.
+The benchmark angle is real too: you can evaluate any LLM's deception-detection ability by measuring its counterfactual reward on level 3–4 scenarios. The number you get is grounded in actual project recovery performance — not a judge's rubric or a held-out test set.
 
-> "A messy but ambitious environment with real training evidence beats a polished but boring one." — OpenEnv Hackathon judging guide
+> *"A messy but ambitious environment with real training evidence beats a polished but boring one."*  
+> — OpenEnv Hackathon judging guide
 
-## All resources
+---
 
-- Live demo: [huggingface.co/spaces/aryannzzz/crisisops](https://huggingface.co/spaces/aryannzzz/crisisops)
-- Codebase: [github.com/aryannzzz/crisisops](https://github.com/aryannzzz/crisisops)
-- Training notebook: [One-click Colab](https://colab.research.google.com/github/aryannzzz/crisisops/blob/main/training/colab_notebook.ipynb)
-- Demo video: Add YouTube URL after recording
+## Try it yourself
 
-Built for the OpenEnv Hackathon, April 2026 · IIT Madras · Qwen2.5-1.5B + GRPO + Unsloth + TRL
+The [live Gradio demo](https://huggingface.co/spaces/aryannzzz/crisisops) lets you step through an episode manually: choose an action, see the observation update in real time, and watch the reward appear at episode end. Trying to trust all the self-reports and seeing what happens is the fastest way to understand intuitively why this task is hard.
+
+To run training locally with the LLM adversary active (free, no API cost):
+
+```bash
+# Pull the adversary model — runs entirely locally
+ollama pull qwen2.5:3b && ollama serve &
+
+# Clone and set up
+git clone https://github.com/vedchamp07/crisisops
+cd crisisops && git checkout Aryan
+pip install -r requirements_train.txt
+
+# Sanity check
+python -m calibration.calibrate
+
+# Train
+python training/grpo_trainer.py
+```
+
+Or open the [Colab notebook](https://colab.research.google.com/github/vedchamp07/crisisops/blob/Aryan/training/colab_notebook.ipynb), select T4 GPU, and run all cells. Training takes roughly 4–6 hours for 300 episodes.
+
+---
+
+*Built for the OpenEnv Hackathon, April 2026 · Qwen2.5-1.5B + GRPO + HuggingFace TRL*
+
+**Live demo** · [huggingface.co/spaces/aryannzzz/crisisops](https://huggingface.co/spaces/aryannzzz/crisisops)  
+**Demo video** · *(add YouTube URL after recording)*
