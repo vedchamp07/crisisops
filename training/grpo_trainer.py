@@ -55,7 +55,7 @@ CURRICULUM_WINDOW       = 10   # episodes to average for unlock check
 CURRICULUM_LOG_INTERVAL = 50   # training log cadence for level visibility
 
 # Max steps per episode during training
-MAX_EPISODE_STEPS = 30
+MAX_EPISODE_STEPS = 8
 
 # FIX: 1 Add hard anti-query-loop rule to force decisive paid actions.
 # System prompt for PM agent
@@ -638,6 +638,9 @@ def train(
     if "temperature" in _grpo_config_sig:
         _grpo_kwargs["temperature"] = GRPO_TEMPERATURE
 
+    if "beta" in _grpo_config_sig:
+        _grpo_kwargs["beta"] = 0.0
+
     # Advantage normalization: TRL GRPOTrainer already uses (std + 1e-4) in code.
     # Do NOT set GRPOConfig "epsilon" here — that is the PPO clip range (~0.2), not a
     # numerical-stability term for the std denominator.
@@ -734,6 +737,16 @@ def train(
     else:
         _trainer_kwargs["tokenizer"] = tokenizer
     trainer = GRPOTrainer(**_trainer_kwargs)
+
+    if report_to == "wandb":
+        try:
+            import wandb
+
+            if wandb.run is not None:
+                wandb.define_metric("train/frac_reward_zero_std", summary="mean")
+        except Exception:
+            pass
+
     trainer.train()
 
     # Use the reward log written directly by reward_fn (belt-and-suspenders);
