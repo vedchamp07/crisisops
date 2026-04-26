@@ -861,6 +861,28 @@ def train(
     elif "mini_batch_size" in _grpo_config_sig:
         _grpo_kwargs["mini_batch_size"] = GRPO_MINI_BATCH_SIZE
 
+    # T4 and older / non-Ampere GPUs: bf16 raises
+    # ``ValueError: Your setup doesn't support bf16/gpu`` in TrainingArguments.
+    # Use fp16 on those; bf16 on Ampere+ when `torch.cuda.is_bf16_supported()`.
+    _is_bf = getattr(torch.cuda, "is_bf16_supported", None)
+    _ok_bf = bool(torch.cuda.is_available() and callable(_is_bf) and _is_bf())
+    _env = os.environ.get("CRISISOPS_USE_BF16", "").lower()
+    _force_no_bf = _env in ("0", "false", "no")
+    _force_yes_bf = _env in ("1", "true", "yes")
+    if "bf16" in _grpo_config_sig and "fp16" in _grpo_config_sig:
+        if _force_yes_bf and not _ok_bf:
+            # Avoid crash; same as Transformers' check
+            _grpo_kwargs["bf16"] = False
+            _grpo_kwargs["fp16"] = bool(torch.cuda.is_available())
+        elif _force_no_bf or not _ok_bf:
+            _grpo_kwargs["bf16"] = False
+            _grpo_kwargs["fp16"] = bool(torch.cuda.is_available())
+        else:
+            _grpo_kwargs["bf16"] = True
+            _grpo_kwargs["fp16"] = False
+    elif "bf16" in _grpo_config_sig and not _ok_bf:
+        _grpo_kwargs["bf16"] = False
+
     config = GRPOConfig(**_grpo_kwargs)
 
     # The reward_fn must also vary scenarios per completion; pass the generator
