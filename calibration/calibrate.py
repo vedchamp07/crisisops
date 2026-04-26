@@ -1,5 +1,5 @@
 """
-calibration/calibrate.py — Calibration script for CrisisOps v2.
+calibration/calibrate.py — Calibration script for CrisisOps.
 
 Spec: "CALIBRATION SCRIPT (calibrate.py)"
 
@@ -205,7 +205,7 @@ def run_calibration(n_episodes: int = 20, seed: int = 1000) -> dict:  # FIX-3: a
     from scenarios.level1 import LEVEL1_SCENARIOS
 
     print("=" * 60)
-    print("CrisisOps v2 — Calibration")
+    print("CrisisOps — Calibration")
     print(f"Running {n_episodes} episodes each for Greedy PM and Oracle")  # FIX-3: use param
     print("=" * 60)
 

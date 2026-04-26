@@ -1,5 +1,5 @@
 """
-state.py — Core dataclass definitions for CrisisOps v2.
+state.py — Core dataclass definitions for CrisisOps.
 
 All state objects use Python dataclasses. The candor float lives ONLY on
 TeamMember and is never copied into any observation dict. Everything the

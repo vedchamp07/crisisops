@@ -1,4 +1,4 @@
-# CrisisOps v2 (HF Spaces Backup README)
+# CrisisOps (HF Spaces Backup README)
 
 Live demo: https://huggingface.co/spaces/aryannzzz/crisisops
 

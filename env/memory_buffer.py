@@ -1,5 +1,5 @@
 """
-env/memory_buffer.py — Long-horizon memory buffer for CrisisOps v2.
+env/memory_buffer.py — Long-horizon memory buffer for CrisisOps.
 
 At every memory_compression_interval steps, compresses the current episode state
 into a short natural-language summary stored in state.memory_buffer.

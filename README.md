@@ -1,5 +1,5 @@
 ---
-title: CrisisOps v2
+title: CrisisOps
 emoji: 🚨
 colorFrom: red
 colorTo: blue
@@ -12,7 +12,7 @@ short_description: PM RL env — catch deceptive devs in software crises
 python_version: "3.11"
 ---
 
-# CrisisOps v2
+# CrisisOps
 
 An OpenEnv-compatible reinforcement learning environment for training a small LLM to recover failing software projects against adversarially deceptive team members.
 
@@ -60,7 +60,7 @@ plots/reward_curve.png
 
 ## What it is
 
-CrisisOps v2 trains a PM agent to manage software crises when team members actively lie about their progress. The core challenge: some engineers over-report task completion to avoid accountability. The agent must detect deception by cross-referencing self-reports with objective observable signals (commit activity, ticket age, peer mentions), then act efficiently within a limited action budget.
+CrisisOps trains a PM agent to manage software crises when team members actively lie about their progress. The core challenge: some engineers over-report task completion to avoid accountability. The agent must detect deception by cross-referencing self-reports with objective observable signals (commit activity, ticket age, peer mentions), then act efficiently within a limited action budget.
 
 The training signal is **counterfactual reward**: agent's final project score minus what a greedy baseline PM would have scored on the same starting state.
 
@@ -159,7 +159,7 @@ Budget starts at **20**. Actions cost:
 | 2 (heavy)         | `resolve_blocker`                                                                                                                                                     |
 | Terminal (cost 1) | `submit_recovery_plan`                                                                                                                                                 |
 
-**16 action types in total** — 4 free, 10 at cost-1 (including the three v2.1 actions `query_peer_opinion`, `force_truth`, and `trigger_whistleblower`), 1 at cost-2, and 1 terminal (`submit_recovery_plan`). The canonical list is in `env/actions.py` (`ACTION_COSTS`).
+**16 action types in total** — 4 free, 10 at cost-1 (including the three extended actions `query_peer_opinion`, `force_truth`, and `trigger_whistleblower`), 1 at cost-2, and 1 terminal (`submit_recovery_plan`). The canonical list is in `env/actions.py` (`ACTION_COSTS`).
 
 If budget reaches 0 before `submit_recovery_plan`, the episode ends and applies a -0.30 penalty to the agent's score.
 

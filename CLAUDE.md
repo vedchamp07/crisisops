@@ -1,4 +1,4 @@
-# CrisisOps v2 — Start Full Training Run
+# CrisisOps — Start Full Training Run
 
 ## What you already know
 
@@ -195,7 +195,7 @@ if n > 5:
 ax.axhline(0, color='#dc2626', linestyle='--', linewidth=1.2, label='Greedy baseline (0)')
 ax.set_xlabel('Training episode', fontsize=11)
 ax.set_ylabel('Counterfactual reward (agent − greedy PM)', fontsize=11)
-ax.set_title('CrisisOps v2 — GRPO Training Curve', fontsize=12, fontweight='bold')
+ax.set_title('CrisisOps — GRPO Training Curve', fontsize=12, fontweight='bold')
 ax.legend(fontsize=9); ax.grid(True, alpha=0.3)
 
 # Shade curriculum levels

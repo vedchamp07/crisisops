@@ -1,5 +1,5 @@
 """
-main.py — CrisisOps v2 entry points.
+main.py — CrisisOps entry points.
 
 Usage:
     python main.py demo          # launch Gradio demo (same as python app.py)

@@ -1,7 +1,7 @@
 """
 candor.py — Candor score system, deception mechanics, and observable signal generation.
 
-The candor system is the core novel mechanism of CrisisOps v2.  Each TeamMember
+The candor system is the core novel mechanism of CrisisOps.  Each TeamMember
 gets a hidden candor float sampled once per episode.  The reported completion
 diverges from actual completion by an amount proportional to (1 - candor).
 Observable signals are computed strictly from actual state so that a clever agent

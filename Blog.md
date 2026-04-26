@@ -1,10 +1,10 @@
-# CrisisOps v2: Training an AI Project Manager to Detect Lies
+# CrisisOps: Training an AI Project Manager to Detect Lies
 
 **OpenEnv Hackathon 2026 · Delta Dreamers · CrisisOps · Themes 1 + 2 + 3.1 + 4**
 
 ---
 
-> *In several gym environments, the agent reads machine logs, and as we know, logs don't lie. In CrisisOps, the agent asks engineers, and as we know... engineers do lie.*
+> *In many benchmark settings, observations are objective and hard to fake. In CrisisOps, the agent must work with human self-reports that can be strategically misleading.*
 
 We built this environment because we kept thinking about a problem that doesn't exist in any RL benchmark we know of. The idea emerged through conversations with many people in our known, including a teammate's father at Microsoft who pointed us toward the recurring theme of software project failures and which genuinely interested us to do a solution under the domain. After researching in that domain specifically, we gradually converged on a deceptively but yet simple question: what happens when the information your agent receives is **deliberately falsified** by the very people generating it??
 

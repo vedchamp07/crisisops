@@ -1,5 +1,5 @@
 """
-app.py — CrisisOps v2 Gradio demo for HuggingFace Spaces.
+app.py — CrisisOps Gradio demo for HuggingFace Spaces.
 
 Lets a user manually play one episode of CrisisOps and see the
 counterfactual reward at the end compared to the greedy PM baseline.
@@ -160,19 +160,16 @@ def update_param_hint(action_type: str):
 # Gradio UI
 # ---------------------------------------------------------------------------
 
-with gr.Blocks(title="CrisisOps v2 — Deception Detection RL Environment") as demo:
+with gr.Blocks(title="CrisisOps — Deception Detection RL Environment") as demo:
 
     gr.Markdown("""
-# CrisisOps v2
+# CrisisOps
 
 **Train LLMs to recover failing projects while detecting human deception.**
 
 Team members misreport progress to avoid accountability. The PM agent must 
 triangulate observable signals (commits, ticket age, peer testimony) against 
 self-reports to identify liars and recover the project.
-
-> *"In Kube SRE Gym, the agent reads machine logs — logs don't lie. 
-> In CrisisOps, the agent asks engineers — engineers do lie."*
     """)
 
     with gr.Row():

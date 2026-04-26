@@ -1,5 +1,5 @@
 """
-env/llm_deceptive_agent.py — LLM-powered deceptive team member for CrisisOps v2.
+env/llm_deceptive_agent.py — LLM-powered deceptive team member for CrisisOps.
 
 Replaces one rule-based deceptive NPC per episode with a live LLM call that
 receives true state and generates contextually adaptive lies.

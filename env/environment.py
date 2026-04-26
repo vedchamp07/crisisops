@@ -100,7 +100,7 @@ FREE_QUERY_ACTION_TYPES = {  # BUG-FIX-2: include all free queries in loop detec
 
 class CrisisOpsEnv:
     """
-    OpenEnv 0.2.1 compatible reinforcement learning environment for CrisisOps v2.
+    OpenEnv 0.2.1 compatible reinforcement learning environment for CrisisOps.
 
     Trains a PM agent to recover failing software projects while dealing with
     adversarially deceptive team members.  The counterfactual reward (agent score

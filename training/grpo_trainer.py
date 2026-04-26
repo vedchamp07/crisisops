@@ -1,5 +1,5 @@
 """
-training/grpo_trainer.py — GRPO training loop for CrisisOps v2.
+training/grpo_trainer.py — GRPO training loop for CrisisOps.
 
 Spec: "GRPO TRAINING (grpo_trainer.py)"
 

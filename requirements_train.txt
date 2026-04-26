@@ -1,5 +1,5 @@
 # Full requirements for local training. For the HF Spaces demo, use root `requirements.txt`.
-# CrisisOps v2 requirements
+# CrisisOps training requirements
 # Install order matters: torch before unsloth, unsloth before trl
 
 # Core ML stack

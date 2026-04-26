@@ -1,5 +1,5 @@
 """
-baselines/llm_agent.py — LLM-based agent for evaluating CrisisOps v2.
+baselines/llm_agent.py — LLM-based agent for evaluating CrisisOps.
 
 Runs any OpenAI-compatible chat model as the PM agent and reports
 project_score alongside the greedy and oracle baselines.
@@ -1141,7 +1141,7 @@ def run_eval(
         provider = base_url or "Unknown"
 
     print("=" * 70)
-    print(f"CrisisOps v2 — LLM Agent Evaluation")
+    print(f"CrisisOps — LLM Agent Evaluation")
     print(f"Provider: {provider}  |  Model: {model}  |  Episodes: {n_episodes}")
     print(f"Curriculum level: {curriculum_level}  |  Temperature: {temperature}")
     print("=" * 70)
