@@ -6,7 +6,7 @@
 
 > *In many benchmark settings, observations are objective and hard to fake. In CrisisOps, the agent must work with human self-reports that can be strategically misleading.*
 
-We built this environment because we kept thinking about a problem that doesn't exist in any RL benchmark we know of. The idea emerged through conversations with many people in our network, including a teammate's father at Microsoft, who pointed us toward the recurring theme of software project failures, which genuinely interested us in developing a solution under the domain. After researching in that domain specifically, we gradually converged on a deceptive yet simple question: what happens when the information your agent receives is **deliberately falsified** by the very people generating it??
+We built this environment because we kept thinking about a problem that doesn't exist in any RL benchmark we know of. The idea emerged through conversations with many people in our network, including a teammate's father at Microsoft, who pointed us toward the recurring theme of software project failures, which genuinely interested us in developing a solution under the domain. After researching in that domain specifically, we gradually converged on a deceptive yet simple question: what happens when the information your agent receives is **deliberately falsified** by the very people generating it?
 
 From our research, every standard environment, like Atari, MuJoCo, ALFWorld, and even the enterprise tool-use benchmarks, assumes the agent faces noisy or sparse information. None of them assume the agent faces *strategic adversaries who have a coherent reason to mislead it*. That's a fundamentally different problem class, and it maps directly onto one of the most common failures in real-world AI deployment.
 
@@ -15,7 +15,7 @@ CrisisOps trains a 1.5B-parameter LLM to act as a crisis-mode project manager re
 <img width="742" height="430" alt="PM Agent" src="https://github.com/user-attachments/assets/d1a13021-3089-4c99-ab99-bf72f99d008d" />
 
 
-**[🚀 Live Demo](https://huggingface.co/spaces/aryannzzz/crisisops) · [📓 One-click Colab](https://colab.research.google.com/github/vedchamp07/crisisops/blob/Aryan/training/colab_notebook.ipynb) · [💻 Codebase](https://github.com/aryannzzz/CrisisOps)**
+**[🚀 Live Demo](https://huggingface.co/spaces/aryannzzz/crisisops) · [📓 One-click Kaggle](https://www.kaggle.com/code/aryannzzz/notebook56218a459b) · [💻 Codebase](https://github.com/aryannzzz/CrisisOps)**
 
 ---
 
@@ -195,7 +195,7 @@ python -m calibration.calibrate
 python training/grpo_trainer.py
 ```
 
-Or open the [Colab notebook](https://colab.research.google.com/github/vedchamp07/crisisops/blob/Aryan/training/colab_notebook.ipynb), select T4 GPU, and run all cells. Training takes roughly 4–6 hours for 300 episodes.
+Or open the [Kaggle notebook](https://www.kaggle.com/code/aryannzzz/notebook56218a459b), select T4 GPU, and run all cells. Training takes roughly 4–6 hours for 300 episodes.
 
 ---
 
