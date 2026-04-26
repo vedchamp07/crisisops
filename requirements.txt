@@ -1,30 +1,18 @@
-# CrisisOps v2 requirements
-# Install order matters: torch before unsloth, unsloth before trl
+# Requirements for HF Spaces (demo/environment only)
+# For local training, see requirements_train.txt
+#
+# Gradio 5.50+ works with current huggingface_hub (no legacy HfFolder / oauth).
+# Gradio 4.44 on Spaces was failing with Jinja2/Starlette template cache errors;
+# 5.50+ fixes the UI stack. Do not pin Jinja2 here — use Gradio’s dependencies.
 
-# Core ML stack
-torch>=2.1.0
-transformers>=4.40.0
-accelerate>=0.27.0
-peft>=0.10.0
-
-# Training
-trl>=0.29.0
-unsloth>=2024.3
-
-# Environment
-openai>=1.0.0  # for future LLM eval harness
+gradio==5.50.0
+huggingface_hub>=0.25.0
+numpy>=1.26.0
+openai>=1.0.0
 fastapi>=0.110.0
 uvicorn>=0.29.0
 pydantic>=2.6.0
-
-# MCP server
-mcp>=1.0.0
-
-# Jira/Linear adapter
-requests>=2.31.0
-
-# Testing
-pytest>=8.0.0
-
-# Utilities
-numpy>=1.26.0
+matplotlib>=3.7.0
+scipy>=1.11.0
+seaborn>=0.13.0
+datasets>=2.14.0

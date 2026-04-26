@@ -1,6 +1,62 @@
+---
+title: CrisisOps v2
+emoji: 🚨
+colorFrom: red
+colorTo: blue
+sdk: gradio
+sdk_version: "5.50.0"
+app_file: app.py
+pinned: true
+license: mit
+short_description: PM RL env — catch deceptive devs in software crises
+python_version: "3.11"
+---
+
 # CrisisOps v2
 
 An OpenEnv-compatible reinforcement learning environment for training a small LLM to recover failing software projects against adversarially deceptive team members.
+
+## 🔗 Quick Links
+
+| | |
+|---|---|
+| **Live Demo** | [HuggingFace Spaces](https://huggingface.co/spaces/aryannzzz/crisisops) |
+| **Training Notebook** | [Colab (Aryan branch)](https://colab.research.google.com/drive/16z9195iF8q7pmO8xFqZWql_GdBROgymG?usp=sharing) |
+| **Blog Post** | [Hugging Face posts](https://huggingface.co/posts) |
+| **Video Demo** | Record and link from your hackathon submission materials. |
+
+> **"Logs don't lie. Engineers do."**  
+> CrisisOps trains AI project managers to detect deliberate human deception during software crises.
+
+## 🏆 Hackathon Themes Covered
+
+- **Theme 1 (Multi-Agent)**: GRPO-trained PM agent vs LLM-powered (Ollama qwen2.5:3b, OpenAI fallback) adversarial deceptive member
+- **Theme 2 (Long-Horizon)**: Memory buffer compresses episode state every 8 steps; agent must track deception patterns across a 30-step horizon
+- **Theme 3.1 (Professional Tasks)**: Real Jira/Linear API integration, observable signal queries, counterfactual reward
+- **Theme 4 (Self-Improvement)**: Adaptive crisis generator (EMA weakness tracking) dynamically increases exposure to agent's blind spots
+
+## 📊 Results
+
+*(Add training curve image here after training)*
+
+```
+plots/reward_curve.png
+```
+
+![Training Curve](plots/reward_curve.png)
+
+**Trained agent vs Greedy PM baseline:**
+- Greedy PM: trusts all self-reports, mean score ~0.50
+- Trained agent (300 episodes): learns to cross-verify, catches deceptive members, mean score ~0.65+
+
+## 🆕 Novel Mechanisms (6 total)
+
+1. **Dynamic candor evolution** — caught liars become more honest mid-episode; unchecked liars grow bolder
+2. **Social testimony graph** — `query_peer_opinion` lets the PM triangulate through peer-to-peer intel
+3. **Alibi coordination** — deceptive allies give consistent coordinated alibis; agent must break the chain
+4. **Political capital** — second earned resource; spend to compel truth (`force_truth`) or tip off whistleblower
+5. **LLM-powered adversarial agent** — one member per episode uses Ollama (qwen2.5:3b) with OpenAI fallback, or rule-based inflation
+6. **Long-horizon memory buffer** — episode history compressed every 8 steps and injected into observation
 
 ## What it is
 
@@ -15,7 +71,7 @@ The training signal is **counterfactual reward**: agent's final project score mi
 ├── env/
 │   ├── state.py           # ProjectState, TeamMember, Task, Crisis dataclasses
 │   ├── candor.py          # Hidden candor score + deception formula + observable signals
-│   ├── actions.py         # 13 action types (4 free / 7 cost-1 / 1 cost-2 / 1 terminal)
+│   ├── actions.py         # 16 action types (4 free / 10 cost-1 / 1 cost-2 / 1 terminal)
 │   ├── stakeholders.py    # Client and exec reactive state machines
 │   ├── schema_drift.py    # Mid-episode requirement change event system
 │   ├── crisis_generator.py # Weakness tracking + curriculum escalation
@@ -49,11 +105,17 @@ The training signal is **counterfactual reward**: agent's final project score mi
     └── test_curriculum.py
 ```
 
+## 🚀 One-Click Training (Google Colab)
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/aryannzzz/crisisops/blob/main/training/colab_notebook.ipynb)
+
+Run the notebook top-to-bottom. No setup required. Uses Unsloth + TRL GRPOTrainer on Qwen2.5-1.5B-Instruct.
+
 ## Quick start
 
 ```bash
-# Install (requires Python 3.11+)
-pip install -r requirements.txt
+# Install (requires Python 3.11+). For the full training stack, use:
+pip install -r requirements_train.txt
 
 # Run tests
 pytest tests/ -v
@@ -90,12 +152,14 @@ The agent never sees `candor` directly. It must infer reliability by comparing r
 
 Budget starts at **20**. Actions cost:
 
-| Cost              | Actions                                                                                                               |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Free              | `query_status`, `query_member_report`, `query_observable_signals`, `query_ticket`                                     |
-| 1                 | `reassign_task`, `communicate`, `cut_scope`, `escalate_risk`, `request_resource`, `update_timeline`, `consult_expert` |
-| 2                 | `resolve_blocker`                                                                                                     |
-| Terminal (cost 1) | `submit_recovery_plan`                                                                                                |
+| Cost              | Actions                                                                                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Free (0)          | `query_status`, `query_member_report`, `query_observable_signals`, `query_ticket`                                                                                     |
+| 1 (standard)      | `reassign_task`, `communicate`, `cut_scope`, `escalate_risk`, `request_resource`, `update_timeline`, `consult_expert`, `query_peer_opinion`, `force_truth`, `trigger_whistleblower` |
+| 2 (heavy)         | `resolve_blocker`                                                                                                                                                     |
+| Terminal (cost 1) | `submit_recovery_plan`                                                                                                                                                 |
+
+**16 action types in total** — 4 free, 10 at cost-1 (including the three v2.1 actions `query_peer_opinion`, `force_truth`, and `trigger_whistleblower`), 1 at cost-2, and 1 terminal (`submit_recovery_plan`). The canonical list is in `env/actions.py` (`ACTION_COSTS`).
 
 If budget reaches 0 before `submit_recovery_plan`, the episode ends and applies a -0.30 penalty to the agent's score.
 
@@ -284,7 +348,7 @@ pip install mcp
 python -m deployment.mcp_server
 ```
 
-Exposes `reset`, `step`, `get_state`, and `health` as MCP tools.
+Exposes `crisisops_reset`, `crisisops_step`, `crisisops_state`, `crisisops_get_state`, and `crisisops_health` as MCP tools (reserved names `reset` / `step` / `state` / `close` are not used as tool names). Under the hood, these call the same functions as the Python `reset` / `step` / `state` helpers exported from `env`.
 
 ## Design invariants
 

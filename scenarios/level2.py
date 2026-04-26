@@ -285,7 +285,10 @@ LEVEL2_SCENARIOS = [
 
 
 def get_random_level2_scenario() -> Callable[[random.Random], ProjectState]:
-    """Return a randomly chosen Level 2 scenario factory."""
-    import random as _random
-    idx = _random.randint(0, len(LEVEL2_SCENARIOS) - 1)
-    return LEVEL2_SCENARIOS[idx]
+    """Return a factory that draws a Level 2 template per episode from ``rng``."""
+
+    def factory(rng: random.Random) -> ProjectState:
+        fn = rng.choice(LEVEL2_SCENARIOS)
+        return fn(rng)
+
+    return factory

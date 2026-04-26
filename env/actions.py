@@ -204,9 +204,33 @@ def action_query_member_report(state: ProjectState, params: Dict[str, Any]) -> A
     member = state.get_member(member_id)
     if member is None:
         return ActionResult(error=f"Unknown member_id: {member_id!r}")
+    # Track PM actions toward this member (for LLM deceptive agent context)
+    member.pm_actions_toward_member.append("query_member_report")
 
     # Count this as a member query for cross_verify_rate denominator
     state.total_member_query_calls += 1
+
+    # LLM deceptive agent: generate adaptive lie if this member uses live LLM
+    if (member.is_llm_agent and
+            member.candor_level == CANDOR_LEVEL_SELF_PRESERVATION):
+        from env.llm_deceptive_agent import generate_adaptive_lie
+        lie_result = generate_adaptive_lie(
+            member=member,
+            state=state,
+            pm_actions_toward_member=member.pm_actions_toward_member,
+            prior_statements=member.prior_statements,
+        )
+        # Override reported_completion with LLM-generated value
+        member.reported_completion = lie_result["reported_completion"]
+        # Store statement for consistency in future calls
+        if lie_result["statement"]:
+            member.prior_statements.append(lie_result["statement"])
+        # Store alibi for injection into observation
+        _llm_statement = lie_result.get("statement", "")
+        _llm_alibi = lie_result.get("alibi")
+    else:
+        _llm_statement = ""
+        _llm_alibi = None
 
     observation = {
         "action_type": "query_member_report",
@@ -217,11 +241,18 @@ def action_query_member_report(state: ProjectState, params: Dict[str, Any]) -> A
         "reported_availability": round(member.reported_availability, 3),
         "assigned_task_ids": member.assigned_task_ids,
     }
+    # Inject LLM-generated natural language statement if present
+    if _llm_statement:
+        observation["member_statement"] = _llm_statement
+    # Inject alibi (LLM-generated or alliance-based)
+    if _llm_alibi:
+        observation["alibi"] = {"type": "dependency_block", "claim": _llm_alibi}
 
     # Alibi injection: allied self-preservation members blame their stall on their ally.
     # The alibi is CONSISTENT (always blames the same task) so the agent can debunk it
     # by running query_observable_signals on the blamed ally.
-    if (member.candor_level == CANDOR_LEVEL_SELF_PRESERVATION
+    if (not _llm_alibi
+            and member.candor_level == CANDOR_LEVEL_SELF_PRESERVATION
             and member.alliance_id is not None):
         ally = _find_ally(member, state)
         if ally and ally.assigned_task_ids:
@@ -270,6 +301,7 @@ def action_query_observable_signals(
 
     # Track cross-verification for dynamic candor and catch detection
     member.times_cross_verified += 1
+    member.pm_actions_toward_member.append("query_observable_signals")
     member.last_cross_verified_step = state.current_step
 
     return ActionResult(observation={

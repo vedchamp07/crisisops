@@ -100,17 +100,38 @@ def health() -> Dict[str, str]:
     return {"status": "ok", "service": "CrisisOps MCP Server"}
 
 
+# MCP tool wrappers — use prefixed names to avoid reserved names (reset, step, state, close)
+def crisisops_reset(seed: Optional[int] = None) -> Dict[str, Any]:
+    return reset(seed=seed)
+
+
+def crisisops_step(action: Dict[str, Any]) -> Dict[str, Any]:
+    return step(action)
+
+
+def crisisops_state() -> Dict[str, Any]:
+    return state()
+
+
+def crisisops_get_state() -> Dict[str, Any]:
+    return get_state()
+
+
+def crisisops_health() -> Dict[str, str]:
+    return health()
+
+
 # ---------------------------------------------------------------------------
 # Build MCP server if available
 # ---------------------------------------------------------------------------
 
 if _MCP_AVAILABLE:
     mcp = FastMCP("CrisisOps")
-    mcp.tool()(reset)
-    mcp.tool()(step)
-    mcp.tool()(state)
-    mcp.tool()(get_state)
-    mcp.tool()(health)
+    mcp.tool()(crisisops_reset)
+    mcp.tool()(crisisops_step)
+    mcp.tool()(crisisops_state)
+    mcp.tool()(crisisops_get_state)
+    mcp.tool()(crisisops_health)
 
 else:
     mcp = None   # type: ignore[assignment]

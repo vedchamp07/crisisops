@@ -396,7 +396,10 @@ LEVEL3_SCENARIOS = [
 
 
 def get_random_level3_scenario() -> Callable[[random.Random], ProjectState]:
-    """Return a randomly chosen Level 3 scenario factory."""
-    import random as _random
-    idx = _random.randint(0, len(LEVEL3_SCENARIOS) - 1)
-    return LEVEL3_SCENARIOS[idx]
+    """Return a factory that draws a Level 3 template per episode from ``rng``."""
+
+    def factory(rng: random.Random) -> ProjectState:
+        fn = rng.choice(LEVEL3_SCENARIOS)
+        return fn(rng)
+
+    return factory

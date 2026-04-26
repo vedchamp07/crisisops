@@ -176,6 +176,12 @@ class CrisisOpsEnv:
         # FIX: 1 Reset free-query loop counter at episode start.
         state.consecutive_free_query_count = 0
         state.political_capital = 5.0  # reset political capital each episode
+        state.memory_buffer = ""
+        state.last_memory_compression_step = -1
+        # Set compression interval based on curriculum level:
+        # Level 1-2: every 8 steps (short horizon, easier)
+        # Level 3-4: every 5 steps (longer horizon, harder — agent must compress more often)
+        state.memory_compression_interval = 8 if self._curriculum_level <= 2 else 5
         state.active_drift_events = []
         state.pending_drift_event = None
         state.drift_fire_step = None
@@ -188,6 +194,23 @@ class CrisisOpsEnv:
             member.times_cross_verified = 0
             member.last_cross_verified_step = -10
             member.caught_this_episode = False
+        # Designate ONE self-preservation member per episode as the LLM agent.
+        # This member will generate contextually adaptive lies via LLM API.
+        # Reset tracking fields for all members first.
+        from env.state import CANDOR_LEVEL_SELF_PRESERVATION
+        for member in state.team_members:
+            member.is_llm_agent = False
+            member.pm_actions_toward_member = []
+            member.prior_statements = []
+
+        # Find all self-preservation members and pick one (seeded for reproducibility)
+        sp_members = [
+            m for m in state.team_members
+            if m.candor_level == CANDOR_LEVEL_SELF_PRESERVATION
+        ]
+        if sp_members:
+            chosen = self._rng.choice(sp_members)
+            chosen.is_llm_agent = True
 
         # Schema drift (Level 2+)
         if self._curriculum_level >= 2:
@@ -295,6 +318,11 @@ class CrisisOpsEnv:
         # Collect pending drift observation (set during this or previous step)
         drift_obs = get_pending_drift_observation(state)
 
+        # --- Long-horizon memory compression ---
+        if not result.done:
+            from env.memory_buffer import maybe_update_memory
+            maybe_update_memory(state)
+
         # --- Stakeholder state machines ---
         if not result.done:
             step_client_state_machine(state)
@@ -349,6 +377,8 @@ class CrisisOpsEnv:
             "current_step": s.current_step,
             "budget_remaining": s.budget_remaining,
             "political_capital": round(s.political_capital, 2),
+            "memory_buffer": s.memory_buffer,
+            "last_memory_compression_step": s.last_memory_compression_step,
             "done": s.done,
             "terminated_by_budget": s.terminated_by_budget,
             "curriculum_level": s.curriculum_level,
@@ -460,6 +490,7 @@ class CrisisOpsEnv:
             "team_members": members_obs,
             "crises": crises_obs,
             "stakeholder": get_stakeholder_observation(s),
+            "agent_memory": s.memory_buffer if s.memory_buffer else None,
             "done": s.done,
         }
 

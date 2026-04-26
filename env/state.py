@@ -112,6 +112,10 @@ class TeamMember:
     times_cross_verified: int = 0              # how many times PM ran query_observable_signals on this member
     last_cross_verified_step: int = -10        # step index of most recent cross-verification
     caught_this_episode: bool = False          # True once PM catches this member lying
+    # --- LLM deceptive agent tracking ---
+    is_llm_agent: bool = False             # True for the one member using live LLM lies
+    pm_actions_toward_member: List[str] = field(default_factory=list)  # PM actions targeting this member
+    prior_statements: List[str] = field(default_factory=list)          # LLM's own prior lies (for consistency)
 
     # --- Morale contribution (spec uses team_morale_avg) ---
     morale: float = 7.0               # individual morale 0.0–10.0
@@ -275,6 +279,10 @@ class ProjectState:
 
     # --- Political capital (second earned resource) ---
     political_capital: float = 5.0            # starts at 5, range 0–20
+    # --- Long-horizon memory buffer (Theme #2) ---
+    memory_buffer: str = ""                    # compressed state summary from last compression
+    last_memory_compression_step: int = -1    # step at which buffer was last written
+    memory_compression_interval: int = 8      # compress every N steps (configurable per level)
 
     # History
     actions_used: List[str] = field(default_factory=list)

@@ -1,4 +1,6 @@
 venv/
+.venv/
+uv.lock
 __pycache__/
 *.pyc
 *.pyo
@@ -7,6 +9,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+dump/
 .env
 .DS_Store
 *.log
@@ -18,5 +21,6 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+.vendor/
 node_modules/
 .next/

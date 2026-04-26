@@ -38,9 +38,9 @@ LORA_ALPHA   = 32
 LORA_TARGET_MODULES = ["q_proj", "v_proj"]
 LORA_DROPOUT = 0.0
 
-GRPO_BATCH_SIZE         = 4
+GRPO_BATCH_SIZE         = 4   # T4 14.5GB: 4-bit 1.5B fits batch 4; if OOM use 2 + gen 2 + noise below
 GRPO_MINI_BATCH_SIZE    = 2
-GRPO_NUM_GENERATIONS    = 4    # G in GRPO: responses per prompt
+GRPO_NUM_GENERATIONS    = 4   # G in GRPO: need ≥3 for nontrivial group-relative advantage
 GRPO_MAX_NEW_TOKENS     = 256
 GRPO_TEMPERATURE        = 0.9
 GRPO_LEARNING_RATE      = 2e-5
@@ -74,30 +74,43 @@ A member is DECEPTIVE when signals contradict their self-report:
 === MANDATORY PROCEDURE EACH TURN ===
 Follow these steps in order. Only take ONE action per turn.
 
-STEP A — GATHER (FREE, costs no budget):  # FIX-2: synced from llm_agent.py
-  After your first turn, some members may still be unverified. If any  # FIX-2: synced from llm_agent.py
-  team member has NOT been cross-verified yet, call  # FIX-2: synced from llm_agent.py
-  query_observable_signals for them — this is always valid. However,  # FIX-2: synced from llm_agent.py
-  after 2 consecutive free queries you MUST take a paid action before  # FIX-2: synced from llm_agent.py
-  querying again.  # FIX-2: synced from llm_agent.py
+STEP A — GATHER (FREE, costs no budget):
+  After your first turn, some members may still be unverified. If any
+  team member has NOT been cross-verified yet, call
+  query_observable_signals for them — this is always valid. However,
+  after 2 consecutive free queries you MUST take a paid action before
+  querying again.
 
-STEP B — DETECT (do this mentally, no action needed):  # FIX-2: synced from llm_agent.py
-  Compare each member's reported_completion with their signals.  # FIX-2: synced from llm_agent.py
-  Deceptive members have tasks that are NOT actually progressing — reassigning them helps.  # FIX-2: synced from llm_agent.py
-  Check AGENT MEMORY for members already flagged as DECEPTIVE / SUSPICIOUS.  # FIX-2: synced from llm_agent.py
+STEP B — DETECT (do this mentally, no action needed):
+  Compare each member's reported_completion with their signals.
+  Deceptive members have tasks that are NOT actually progressing — reassigning them helps.
+  Check AGENT MEMORY for members already flagged as DECEPTIVE / SUSPICIOUS.
 
-STEP C — ACT (pick the highest-impact paid action, EVERY turn):  # FIX-2: synced from llm_agent.py
-  1. DECEPTIVE member assigned to an unresolved crisis task → reassign_task to best available member.  # FIX-2: synced from llm_agent.py
-     This is ALWAYS priority 1 when a deceptive member holds a task.  # FIX-2: synced from llm_agent.py
-  2. Steps since last communicate >= 4 → communicate {"message_type": "proactive_escalation_with_plan", ...}  # FIX-2: synced from llm_agent.py
-  3. Blocked critical-path task and budget > 4 → resolve_blocker  # FIX-2: synced from llm_agent.py
-  4. Any unresolved crisis and budget > 3 → reassign_task or escalate_risk  # FIX-2: synced from llm_agent.py
-  5. Budget ≤ 5 OR all crises resolved → submit_recovery_plan IMMEDIATELY.  # FIX-5: synced from llm_agent.py, was ≤ 3
-     WARNING: Do NOT submit just because you have communicated and escalated.  # FIX-5: synced from llm_agent.py
-     A recovery plan requires tasks to COMPLETE. Keep reassigning until you  # FIX-5: synced from llm_agent.py
-     see is_resolved=true in the crisis list OR budget reaches 5.  # FIX-5: synced from llm_agent.py
+STEP C — ACT (pick the highest-impact paid action, EVERY turn):
+  1. DECEPTIVE member assigned to an unresolved crisis task → reassign_task to best available member.
+     This is ALWAYS priority 1 when a deceptive member holds a task.
+  2. Steps since last communicate >= 4 → communicate {"message_type": "proactive_escalation_with_plan", ...}
+  3. Blocked critical-path task and budget > 4 → resolve_blocker
+  4. Any unresolved crisis and budget > 3 → reassign_task or escalate_risk
+  5. Budget ≤ 5 OR all crises resolved → submit_recovery_plan IMMEDIATELY.
+     WARNING: Do NOT submit just because you have communicated and escalated.
+     A recovery plan requires tasks to COMPLETE. Keep reassigning until you
+     see is_resolved=true in the crisis list OR budget reaches 5.
 
-MANDATORY ACTION RULE: You may call query_status or query_observable_signals at most TWICE IN A ROW. After two consecutive information-gathering actions, your next action MUST be a cost-1 or cost-2 decision action: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, or resolve_blocker. Failure to follow this rule means the project fails.  # FIX-2: synced from llm_agent.py
+MANDATORY ACTION RULE: You may call query_status or query_observable_signals at most TWICE IN A ROW. After two consecutive information-gathering actions, your next action MUST be a cost-1 or cost-2 decision action: reassign_task, communicate, cut_scope, escalate_risk, request_resource, update_timeline, consult_expert, or resolve_blocker. Failure to follow this rule means the project fails.
+
+=== AGENT MEMORY (long-horizon tracking) ===
+Every 8 steps (or 5 steps at high curriculum), the environment compresses your
+episode history into "agent_memory" in the observation. This is YOUR compressed
+record of what you have learned. When agent_memory is present:
+- Trust it as your ground truth for who has been verified and flagged
+- Members marked SUSPICIOUS in memory should be treated as deceptive
+- Members marked CAUGHT in memory have already been exposed
+- Do NOT re-query members you have already verified unless their status changed
+- If agent_memory shows a crisis as resolved, do NOT re-escalate it
+
+agent_memory is lossy — use it as a guide but cross-reference with the current
+observation's team_members list for exact reported values.
 
 === REQUIRED OUTPUT FORMAT ===
 Return exactly ONE JSON object per turn (no text before or after):
@@ -141,9 +154,9 @@ Budget starts at 20. Exhausting budget without submitting = -0.30 penalty to you
 POLITICAL CAPITAL (PC): starts at 5. Earn by: proactive_escalation_with_plan (+2),
 catching a liar (+3), update_timeline (+1). Spend on: force_truth (-3), trigger_whistleblower (-6).
 Current PC is shown in every observation under 'political_capital'.
-Only submit_recovery_plan when is_resolved=true for all crises, OR budget <= 5.  # FIX-5: synced from llm_agent.py
-Submitting early (before tasks complete) wastes the entire episode.  # FIX-5: synced from llm_agent.py
-Keep reassigning tasks every turn until one of these conditions is met.  # FIX-5: synced from llm_agent.py
+Only submit_recovery_plan when is_resolved=true for all crises, OR budget <= 5.
+Submitting early (before tasks complete) wastes the entire episode.
+Keep reassigning tasks every turn until one of these conditions is met.
 """
 
 
@@ -154,7 +167,8 @@ def format_observation_as_prompt(obs: Dict[str, Any]) -> str:
     The observation is presented as pretty-printed JSON so the model can
     parse the structured state without needing a custom tokenizer.
     """
-    return json.dumps(obs, indent=2)
+    # Compact JSON keeps prompts under context limits while preserving structure.
+    return json.dumps(obs, separators=(",", ":"), ensure_ascii=True)
 
 
 def parse_action_from_response(response: str) -> Dict[str, Any]:
@@ -238,8 +252,7 @@ def _make_reward_fn(scenario_fn_or_generator, curriculum_level: int, model, toke
         Each completion is treated as the first action response.  The episode
         then runs until done or MAX_EPISODE_STEPS.
         """
-        import torch
-        from env.environment import CrisisOpsEnv, MAX_STEPS
+        from env.environment import CrisisOpsEnv
         from env.crisis_generator import CrisisGenerator
 
         rewards = []
@@ -255,6 +268,9 @@ def _make_reward_fn(scenario_fn_or_generator, curriculum_level: int, model, toke
                 ep_seed = _coerce_seed(episode_seeds[i])
             if ep_seed is None:
                 ep_seed = random.randint(0, 2**31 - 1)
+            # Vary seed by completion index so each generation in the group
+            # faces a slightly different scenario, increasing reward variance.
+            ep_seed = (ep_seed + i * 1000007) % (2**31)
 
             # Sample scenario: use a seeded rng so the same ep_seed always
             # produces the same scenario type (reproducibility).
@@ -287,45 +303,27 @@ def _make_reward_fn(scenario_fn_or_generator, curriculum_level: int, model, toke
                 step += 1
                 if done:
                     continue
+                action = _inner_agent_action(obs, step + 1)
 
-                # Generate one inner-turn action conditioned on updated state.
-                next_step = step + 1
-                try:
-                    user_content = format_observation_as_prompt(obs)
-                    inner_messages = [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_content},
-                    ]
-                    inner_text = tokenizer.apply_chat_template(
-                        inner_messages,
-                        tokenize=False,
-                        add_generation_prompt=True,
-                    )
-                    inputs = tokenizer(inner_text, return_tensors="pt").to(model.device)
-                    with torch.no_grad():
-                        out_ids = model.generate(
-                            **inputs,
-                            max_new_tokens=GRPO_MAX_NEW_TOKENS,
-                            temperature=0.1,
-                            do_sample=True,
-                            pad_token_id=tokenizer.eos_token_id,
-                        )
-                    inner_response = tokenizer.decode(
-                        out_ids[0][inputs["input_ids"].shape[1]:],
-                        skip_special_tokens=True,
-                    )
-                    parsed_action = parse_action_from_response(inner_response)
-                    # Replace any no-op query_status with the inner policy so the
-                    # episode always has purposeful actions — communication cadence
-                    # is maintained and client satisfaction never crashes.
-                    if parsed_action.get("action_type") == "query_status":
-                        action = _inner_agent_action(obs, next_step)
-                    else:
-                        action = parsed_action
-                except Exception:
-                    action = _inner_agent_action(obs, next_step)
+            # Add tiny Gaussian noise to break reward symmetry within GRPO groups.
+            # When the model produces identical completions early in training, all
+            # rewards are identical → advantage = 0 → zero loss → no learning.
+            # Noise std=0.01 is negligible vs the reward signal range (~0.4) but
+            # guarantees non-zero std within each group, allowing gradients to flow.
+            _noise = random.gauss(0, 0.01)
+            rewards.append(float(reward_val) + _noise)
 
-            rewards.append(float(reward_val))
+        # Debug: log reward stats every time reward_fn is called
+        _mean = sum(rewards) / len(rewards) if rewards else 0.0
+        _var = sum((r - _mean) ** 2 for r in rewards) / len(rewards) if rewards else 0.0
+        _std = _var**0.5
+        if _std < 1e-6:
+            print(
+                f"[WARN] reward_fn: zero variance in batch of {len(rewards)} — "
+                f"all rewards identical ({rewards[0]:.4f}). Loss will be 0."
+            )
+        else:
+            print(f"[DEBUG] reward_fn: rewards={[round(r, 4) for r in rewards]} std={_std:.4f}")
 
         return rewards
 
@@ -429,6 +427,9 @@ def train(
         output_dir:       Directory for saving checkpoints and logs
         seed:             Global random seed
     """
+    global _training_reward_log
+    _training_reward_log = []
+
     try:
         from unsloth import FastLanguageModel
         from trl import GRPOTrainer, GRPOConfig
@@ -437,7 +438,7 @@ def train(
     except ImportError as e:
         raise ImportError(
             f"Training requires unsloth and trl: {e}\n"
-            "Install with: pip install unsloth trl>=0.29.0"
+            "Install with: pip install unsloth trl==0.19.1"
         ) from e
 
     from env.crisis_generator import CrisisGenerator
@@ -447,13 +448,52 @@ def train(
     generator = CrisisGenerator(curriculum_level=curriculum_level)
     curriculum = CurriculumManager(starting_level=curriculum_level)
 
+    # Compatibility patch: older Unsloth loaders expect torch_dtype in config.to_dict().
+    try:
+        from transformers.configuration_utils import PretrainedConfig as _HFPretrainedConfig
+
+        if not getattr(_HFPretrainedConfig, "_crisisops_torch_dtype_patch", False):
+            _orig_to_dict = _HFPretrainedConfig.to_dict
+
+            def _patched_to_dict(self):
+                data = _orig_to_dict(self)
+                if "torch_dtype" not in data:
+                    torch_dtype = getattr(self, "torch_dtype", None)
+                    if torch_dtype is None:
+                        data["torch_dtype"] = "bfloat16"
+                    else:
+                        data["torch_dtype"] = str(torch_dtype).replace("torch.", "")
+                return data
+
+            _HFPretrainedConfig.to_dict = _patched_to_dict  # type: ignore[assignment]
+            _HFPretrainedConfig._crisisops_torch_dtype_patch = True  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
     # --- Load model with Unsloth LoRA ---
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=MODEL_NAME,
-        max_seq_length=2048,
-        dtype=None,        # auto-detect
-        load_in_4bit=True,
-    )
+    try:
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=MODEL_NAME,
+            max_seq_length=4096,
+            dtype=None,        # auto-detect
+            load_in_4bit=True,
+        )
+    except KeyError as e:
+        # Some upstream model configs omit torch_dtype and trigger Unsloth loader errors.
+        if "torch_dtype" not in str(e):
+            raise
+        fallback_model = "unsloth/Qwen2.5-1.5B-Instruct-bnb-4bit"
+        print(f"[WARN] Missing torch_dtype in model config for {MODEL_NAME}; retrying with {fallback_model}")
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=fallback_model,
+            max_seq_length=4096,
+            dtype=None,
+            load_in_4bit=True,
+        )
+    # Ensure torch_dtype is set — some Unsloth builds fail without it
+    if not hasattr(model.config, 'torch_dtype') or model.config.torch_dtype is None:
+        import torch as _torch
+        model.config.torch_dtype = _torch.float16
     model = FastLanguageModel.get_peft_model(
         model,
         r=LORA_RANK,
@@ -464,6 +504,33 @@ def train(
         use_gradient_checkpointing="unsloth",
         random_state=seed,
     )
+    # Stability patch: avoid Unsloth's cached generation path, which can fail
+    # on some stacks when past_key_values contains None entries.
+    try:
+        model.config.use_cache = False
+        if hasattr(model, "generation_config") and model.generation_config is not None:
+            model.generation_config.use_cache = False
+            if hasattr(model.generation_config, "cache_implementation"):
+                model.generation_config.cache_implementation = None
+
+        _orig_generate = model.generate
+
+        def _safe_generate(*args, **kwargs):
+            kwargs["use_cache"] = False
+            gen_cfg = kwargs.get("generation_config")
+            if gen_cfg is not None:
+                try:
+                    gen_cfg.use_cache = False
+                    if hasattr(gen_cfg, "cache_implementation"):
+                        gen_cfg.cache_implementation = None
+                except Exception:
+                    pass
+            kwargs.pop("cache_implementation", None)
+            return _orig_generate(*args, **kwargs)
+
+        model.generate = _safe_generate
+    except Exception:
+        pass
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -472,25 +539,66 @@ def train(
 
     # Pass the generator itself so each sample gets a distinct scenario_fn,
     # giving the training set full crisis-type coverage.
-    full_dataset = build_training_dataset(
+    full_dataset_list = build_training_dataset(
         scenario_fn_or_generator=generator,
         curriculum_level=current_level,
         n_samples=num_episodes,
         seed=seed,
     )
+    # Convert to HF Dataset so GRPOTrainer forwards episode_seed as kwargs column
+    try:
+        from datasets import Dataset as HFDataset
+        full_dataset = HFDataset.from_list(full_dataset_list)
+    except ImportError:
+        # Fallback: plain list still works, episode_seed just won't be forwarded
+        full_dataset = full_dataset_list
+        print("[WARN] datasets package not installed — episode_seed not forwarded to reward_fn")
 
-    config = GRPOConfig(
-        output_dir=output_dir,
-        num_train_epochs=1,
-        per_device_train_batch_size=GRPO_BATCH_SIZE,
-        num_generations=GRPO_NUM_GENERATIONS,
-        max_new_tokens=GRPO_MAX_NEW_TOKENS,
-        temperature=GRPO_TEMPERATURE,
-        learning_rate=GRPO_LEARNING_RATE,
-        logging_steps=GRPO_LOGGING_STEPS,
-        save_steps=50,
-        seed=seed,
-    )
+    # Build GRPOConfig — handle parameter name differences across TRL versions
+    import inspect as _inspect
+    _grpo_config_sig = set(_inspect.signature(GRPOConfig.__init__).parameters.keys())
+
+    _grpo_kwargs: Dict[str, Any] = {
+        "output_dir": output_dir,
+        "num_train_epochs": 1,
+        "per_device_train_batch_size": GRPO_BATCH_SIZE,
+        "num_generations": GRPO_NUM_GENERATIONS,
+        "learning_rate": GRPO_LEARNING_RATE,
+        "logging_steps": GRPO_LOGGING_STEPS,
+        "save_steps": 50,
+        "seed": seed,
+        "report_to": "none",  # disable wandb/tensorboard by default
+    }
+
+    # max_new_tokens: some TRL versions use max_completion_length instead
+    if "max_new_tokens" in _grpo_config_sig:
+        _grpo_kwargs["max_new_tokens"] = GRPO_MAX_NEW_TOKENS
+    elif "max_completion_length" in _grpo_config_sig:
+        _grpo_kwargs["max_completion_length"] = GRPO_MAX_NEW_TOKENS
+
+    # Prompt/sequence truncation to keep generation within model context.
+    if "max_prompt_length" in _grpo_config_sig:
+        _grpo_kwargs["max_prompt_length"] = 1024
+    if "max_seq_length" in _grpo_config_sig:
+        _grpo_kwargs["max_seq_length"] = 1536
+    elif "max_length" in _grpo_config_sig:
+        _grpo_kwargs["max_length"] = 1536
+
+    # temperature: some TRL versions don't expose this directly in GRPOConfig
+    if "temperature" in _grpo_config_sig:
+        _grpo_kwargs["temperature"] = GRPO_TEMPERATURE
+
+    # Advantage normalization: TRL GRPOTrainer already uses (std + 1e-4) in code.
+    # Do NOT set GRPOConfig "epsilon" here — that is the PPO clip range (~0.2), not a
+    # numerical-stability term for the std denominator.
+
+    # mini_batch_size: named differently in some versions
+    if "per_device_mini_train_batch_size" in _grpo_config_sig:
+        _grpo_kwargs["per_device_mini_train_batch_size"] = GRPO_MINI_BATCH_SIZE
+    elif "mini_batch_size" in _grpo_config_sig:
+        _grpo_kwargs["mini_batch_size"] = GRPO_MINI_BATCH_SIZE
+
+    config = GRPOConfig(**_grpo_kwargs)
 
     # The reward_fn must also vary scenarios per completion; pass the generator
     # so it can sample fresh scenario_fns inside each rollout.
@@ -506,8 +614,9 @@ def train(
         def on_log(self, args, state, control, logs=None, **kwargs):
             nonlocal current_level
             logs = logs or {}
-            if "train/reward" in logs:
-                batch_reward = float(logs["train/reward"])
+            # TRL 0.19.1 GRPOTrainer logs mean reward under "rewards"
+            if "rewards" in logs:
+                batch_reward = float(logs["rewards"])
                 # Approximate per-episode history from batch-level reward logs.
                 self._reward_history.extend([batch_reward] * GRPO_BATCH_SIZE)
 

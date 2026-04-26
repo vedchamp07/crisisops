@@ -3,7 +3,9 @@ version: 2.0.0
 description: >
   RL environment for training LLM agents to recover failing software projects
   while detecting and managing adversarially deceptive team members.
-  Trains the skill of social triangulation under information warfare.
+  Trains the skill of social triangulation under information warfare with
+  six novel mechanisms spanning deception dynamics, adversarial interaction,
+  and long-horizon planning.
 
 theme: "3.1"
 theme_name: "Professional Tasks — World Modeling"
@@ -69,6 +71,8 @@ features:
   alibi_coordination: true
   social_testimony_graph: true
   political_capital_resource: true
+  llm_powered_adversarial_agent: true
+  long_horizon_memory_buffer: true
   schema_drift: true
   curriculum_learning: true
   counterfactual_reward: true
@@ -101,3 +105,18 @@ novel_mechanisms:
       Second earned resource (alongside budget). Earned through proactive
       communication and catching liars. Spent on force_truth and
       trigger_whistleblower. Creates dual-resource management problem.
+  - name: llm_powered_adversarial_agent
+    description: >
+      One team member per episode uses a live LLM to generate contextually
+      adaptive lies. Uses Ollama (qwen2.5:3b, free, local) with automatic
+      fallback to OpenAI API or rule-based inflation. This is genuine multi-agent RL:
+      a trained PM agent vs a reasoning adversary with no API cost for local use.
+      The adversary reads its true state, prior statements, and PM query history
+      to construct plausible, consistent deceptions.
+  - name: long_horizon_memory_buffer
+    description: >
+      Every 8 steps (5 at level 3-4), the environment compresses episode history
+      into a natural language memory buffer injected into observations as agent_memory.
+      Forces the agent to maintain compressed state tracking across an extended
+      horizon — a genuine long-horizon planning challenge requiring the agent to
+      reason about multi-step deception patterns beyond the immediate observation.
